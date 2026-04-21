@@ -1,0 +1,129 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 520" width="900" height="520" font-family="'Segoe UI',system-ui,sans-serif">
+  <rect width="900" height="520" fill="#0e0e0e" rx="14"/>
+
+  <!-- Browser chrome -->
+  <rect x="14" y="14" width="872" height="492" fill="#181818" rx="10" stroke="#2e2e2e"/>
+  <!-- Tab bar -->
+  <rect x="14" y="14" width="872" height="36" fill="#141414" rx="10"/>
+  <rect x="14" y="38" width="872" height="12" fill="#141414"/>
+  <!-- Traffic lights -->
+  <circle cx="38" cy="32" r="5" fill="#cc5555"/>
+  <circle cx="56" cy="32" r="5" fill="#e0a030"/>
+  <circle cx="74" cy="32" r="5" fill="#4abb6a"/>
+  <!-- URL bar -->
+  <rect x="96" y="23" width="680" height="18" fill="#1e1e1e" rx="4" stroke="#2e2e2e"/>
+  <text x="436" y="35" text-anchor="middle" fill="#8a8a8a" font-size="9" font-family="'Consolas',monospace">http://localhost:8787/skills</text>
+
+  <!-- App shell: sidebar + main -->
+  <!-- Sidebar -->
+  <rect x="14" y="50" width="170" height="456" fill="#181818"/>
+  <!-- Brand -->
+  <text x="30" y="74" fill="#e8e8e8" font-size="13" font-weight="700">aiem</text>
+  <text x="30" y="88" fill="#8a8a8a" font-size="9">AI Extension Manager</text>
+  <line x1="14" y1="94" x2="184" y2="94" stroke="#2e2e2e"/>
+
+  <!-- Nav items -->
+  <!-- active: Skills -->
+  <rect x="18" y="100" width="162" height="26" fill="#ffffff" rx="5"/>
+  <text x="34" y="117" fill="#000000" font-size="11" font-weight="600">Skills</text>
+
+  <text x="34" y="142" fill="#8a8a8a" font-size="11">MCP Servers</text>
+  <text x="34" y="164" fill="#8a8a8a" font-size="11">Secrets</text>
+  <text x="34" y="186" fill="#8a8a8a" font-size="11">Profiles</text>
+  <text x="34" y="208" fill="#8a8a8a" font-size="11">Projects</text>
+  <text x="34" y="230" fill="#8a8a8a" font-size="11">Discover</text>
+  <text x="34" y="252" fill="#8a8a8a" font-size="11">Store</text>
+  <text x="34" y="274" fill="#8a8a8a" font-size="11">IDEs</text>
+  <text x="34" y="296" fill="#8a8a8a" font-size="11">Settings</text>
+
+  <!-- Theme toggle -->
+  <rect x="18" y="476" width="162" height="26" fill="#1e1e1e" rx="5" stroke="#2e2e2e"/>
+  <text x="99" y="493" text-anchor="middle" fill="#8a8a8a" font-size="10">Toggle theme</text>
+
+  <!-- Sidebar right border -->
+  <line x1="184" y1="50" x2="184" y2="506" stroke="#2e2e2e"/>
+
+  <!-- Main area -->
+  <!-- Top header bar -->
+  <rect x="184" y="50" width="702" height="40" fill="#181818" stroke-bottom="#2e2e2e"/>
+  <line x1="184" y1="90" x2="886" y2="90" stroke="#2e2e2e"/>
+  <text x="200" y="74" fill="#e8e8e8" font-size="12" font-weight="600">Skills</text>
+  <!-- connection dot -->
+  <circle cx="870" cy="70" r="4" fill="#4abb6a"/>
+  <text x="856" y="74" text-anchor="end" fill="#8a8a8a" font-size="8">live</text>
+
+  <!-- Page header -->
+  <text x="200" y="116" fill="#e8e8e8" font-size="15" font-weight="700">Skills</text>
+  <text x="200" y="131" fill="#8a8a8a" font-size="10">Manage skills synced from GitHub and deployed into your IDEs.</text>
+  <!-- Header actions -->
+  <rect x="750" y="100" width="80" height="24" fill="#ffffff" rx="4"/>
+  <text x="790" y="116" text-anchor="middle" fill="#000000" font-size="10" font-weight="600">+ Add skill</text>
+  <rect x="660" y="100" width="80" height="24" fill="#1e1e1e" rx="4" stroke="#3a3a3a"/>
+  <text x="700" y="116" text-anchor="middle" fill="#e8e8e8" font-size="10">Clear global</text>
+
+  <!-- Filter bar -->
+  <rect x="196" y="146" width="688" height="28" fill="#1e1e1e" rx="6" stroke="#2e2e2e"/>
+  <text x="210" y="164" fill="#4a4a4a" font-size="10">🔍  Filter by name, source, or IDE…</text>
+
+  <!-- Skill group 1: anthropics/skills -->
+  <rect x="196" y="186" width="688" height="30" fill="#1e1e1e" rx="6" stroke="#2e2e2e"/>
+  <text x="212" y="205" fill="#e8e8e8" font-size="11" font-weight="600">▸ anthropics / skills</text>
+  <text x="500" y="205" fill="#8a8a8a" font-size="9">3 skills</text>
+  <rect x="636" y="193" width="56" height="16" fill="#1e1e1e" rx="3" stroke="#3a3a3a"/>
+  <text x="664" y="204" text-anchor="middle" fill="#8a8a8a" font-size="9">Deploy all</text>
+  <rect x="700" y="193" width="68" height="16" fill="#1e1e1e" rx="3" stroke="#3a3a3a"/>
+  <text x="734" y="204" text-anchor="middle" fill="#8a8a8a" font-size="9">Undeploy all</text>
+  <rect x="776" y="193" width="60" height="16" fill="#cc5555" rx="3"/>
+  <text x="806" y="204" text-anchor="middle" fill="#ffffff" font-size="9">Remove all</text>
+
+  <!-- Skill rows -->
+  <rect x="196" y="224" width="688" height="44" fill="#141414" stroke="#1e1e1e" stroke-width="1"/>
+  <text x="216" y="243" fill="#e8e8e8" font-size="10" font-weight="600">coding</text>
+  <text x="216" y="257" fill="#8a8a8a" font-size="9">anthropics/skills  · main</text>
+  <!-- deployment tags -->
+  <rect x="310" y="232" width="56" height="15" fill="#1a2a1a" rx="3"/>
+  <text x="338" y="243" text-anchor="middle" fill="#4abb6a" font-size="8">claude-code ~</text>
+  <rect x="373" y="232" width="52" height="15" fill="#1a2a1a" rx="3"/>
+  <text x="399" y="243" text-anchor="middle" fill="#4abb6a" font-size="8">cursor ~</text>
+  <!-- actions -->
+  <rect x="720" y="230" width="44" height="18" fill="#1e1e1e" rx="3" stroke="#2e2e2e"/>
+  <text x="742" y="242" text-anchor="middle" fill="#e8e8e8" font-size="9">Update</text>
+  <rect x="772" y="230" width="52" height="18" fill="#1e1e1e" rx="3" stroke="#2e2e2e"/>
+  <text x="798" y="242" text-anchor="middle" fill="#e8e8e8" font-size="9">Undeploy</text>
+  <rect x="830" y="230" width="44" height="18" fill="#2a1a1a" rx="3" stroke="#cc5555"/>
+  <text x="852" y="242" text-anchor="middle" fill="#cc5555" font-size="9">Remove</text>
+
+  <rect x="196" y="268" width="688" height="44" fill="#181818" stroke="#1e1e1e" stroke-width="1"/>
+  <text x="216" y="287" fill="#e8e8e8" font-size="10" font-weight="600">writing</text>
+  <text x="216" y="301" fill="#8a8a8a" font-size="9">anthropics/skills  · main</text>
+  <!-- no deployments -->
+  <text x="310" y="292" fill="#4a4a4a" font-size="9">— not deployed</text>
+  <!-- deploy form -->
+  <rect x="620" y="275" width="66" height="18" fill="#1e1e1e" rx="3" stroke="#2e2e2e"/>
+  <text x="653" y="287" text-anchor="middle" fill="#8a8a8a" font-size="8">claude-code ▾</text>
+  <rect x="693" y="275" width="40" height="18" fill="#1e1e1e" rx="3" stroke="#2e2e2e"/>
+  <text x="713" y="287" text-anchor="middle" fill="#8a8a8a" font-size="8">user ▾</text>
+  <rect x="740" y="275" width="44" height="18" fill="#ffffff" rx="3"/>
+  <text x="762" y="287" text-anchor="middle" fill="#000000" font-size="9" font-weight="600">Deploy</text>
+  <rect x="790" y="275" width="44" height="18" fill="#1e1e1e" rx="3" stroke="#2e2e2e"/>
+  <text x="812" y="287" text-anchor="middle" fill="#e8e8e8" font-size="9">Update</text>
+  <rect x="840" y="275" width="34" height="18" fill="#2a1a1a" rx="3" stroke="#cc5555"/>
+  <text x="857" y="287" text-anchor="middle" fill="#cc5555" font-size="9">Del</text>
+
+  <!-- Skill group 2 -->
+  <rect x="196" y="322" width="688" height="30" fill="#1e1e1e" rx="6" stroke="#2e2e2e"/>
+  <text x="212" y="341" fill="#e8e8e8" font-size="11" font-weight="600">▸ local / my-custom-skill</text>
+  <text x="430" y="341" fill="#8a8a8a" font-size="9">1 skill  · local</text>
+  <rect x="756" y="329" width="64" height="16" fill="#1e1e1e" rx="3" stroke="#3a3a3a"/>
+  <text x="788" y="340" text-anchor="middle" fill="#8a8a8a" font-size="9">Link GitHub</text>
+
+  <!-- Toast example -->
+  <rect x="658" y="410" width="222" height="52" fill="#1a2a1a" rx="8" stroke="#4abb6a" stroke-width="1.5"/>
+  <text x="672" y="430" fill="#4abb6a" font-size="11" font-weight="600">✓  Skill deployed</text>
+  <text x="672" y="448" fill="#8a8a8a" font-size="9">coding → claude-code (user scope)</text>
+  <text x="870" y="418" text-anchor="end" fill="#4a4a4a" font-size="9">×</text>
+
+  <!-- Add skill form card (collapsed) -->
+  <rect x="196" y="370" width="445" height="28" fill="#1e1e1e" rx="6" stroke="#2e2e2e"/>
+  <text x="212" y="388" fill="#8a8a8a" font-size="10">+ Add skill  (GitHub owner/repo  or  URL)</text>
+</svg>

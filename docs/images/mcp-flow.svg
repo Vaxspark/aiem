@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 340" width="860" height="340" font-family="'Segoe UI',system-ui,sans-serif">
+  <rect width="860" height="340" fill="#0e0e0e" rx="14"/>
+  <text x="430" y="32" text-anchor="middle" fill="#e8e8e8" font-size="14" font-weight="600" letter-spacing="0.5">MCP Server Sync Flow</text>
+
+  <!-- Step 1: aiem mcp add -->
+  <rect x="20" y="55" width="160" height="90" fill="#181818" rx="8" stroke="#2e2e2e"/>
+  <text x="100" y="78" text-anchor="middle" fill="#e8e8e8" font-size="10" font-weight="600">servers.json</text>
+  <text x="100" y="94" text-anchor="middle" fill="#8a8a8a" font-size="9">~/.aiem/mcp/</text>
+  <line x1="30" y1="104" x2="170" y2="104" stroke="#2e2e2e"/>
+  <text x="34" y="119" fill="#4a9eff" font-size="8.5" font-family="'Consolas',monospace">aiem mcp add …</text>
+  <text x="34" y="132" fill="#4a9eff" font-size="8.5" font-family="'Consolas',monospace">aiem mcp disable name</text>
+
+  <!-- arrow -->
+  <line x1="180" y1="100" x2="214" y2="100" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#b)"/>
+  <text x="197" y="94" text-anchor="middle" fill="#8a8a8a" font-size="9">sync</text>
+
+  <!-- Step 2: aiem-core sync engine -->
+  <rect x="214" y="55" width="160" height="90" fill="#181818" rx="8" stroke="#2e2e2e"/>
+  <text x="294" y="78" text-anchor="middle" fill="#e8e8e8" font-size="10" font-weight="600">Sync Engine</text>
+  <text x="294" y="94" text-anchor="middle" fill="#8a8a8a" font-size="9">diff + merge</text>
+  <text x="294" y="108" text-anchor="middle" fill="#8a8a8a" font-size="9">backup first</text>
+  <text x="294" y="122" text-anchor="middle" fill="#4abb6a" font-size="9">atomic write</text>
+  <text x="294" y="136" text-anchor="middle" fill="#8a8a8a" font-size="9">--dry-run supported</text>
+
+  <!-- arrows to 3 targets -->
+  <line x1="374" y1="78" x2="408" y2="68" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#b)"/>
+  <line x1="374" y1="100" x2="408" y2="100" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#b)"/>
+  <line x1="374" y1="122" x2="408" y2="132" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#b)"/>
+
+  <!-- Target 1: Codex -->
+  <rect x="408" y="47" width="180" height="46" fill="#1e1e1e" rx="6" stroke="#2e2e2e"/>
+  <text x="498" y="65" text-anchor="middle" fill="#e8e8e8" font-size="10" font-weight="600">Codex</text>
+  <text x="498" y="80" text-anchor="middle" fill="#8a8a8a" font-size="8.5">~/.codex/config.toml</text>
+  <text x="498" y="90" text-anchor="middle" fill="#8a8a8a" font-size="8">[mcp_servers.*]  TOML</text>
+
+  <!-- Target 2: Claude Code -->
+  <rect x="408" y="100" width="180" height="46" fill="#1e1e1e" rx="6" stroke="#2e2e2e"/>
+  <text x="498" y="118" text-anchor="middle" fill="#e8e8e8" font-size="10" font-weight="600">Claude Code</text>
+  <text x="498" y="133" text-anchor="middle" fill="#8a8a8a" font-size="8.5">~/.claude.json  / .mcp.json</text>
+  <text x="498" y="143" text-anchor="middle" fill="#8a8a8a" font-size="8">mcpServers  JSON</text>
+
+  <!-- Target 3: Copilot -->
+  <rect x="408" y="153" width="180" height="46" fill="#1e1e1e" rx="6" stroke="#2e2e2e"/>
+  <text x="498" y="171" text-anchor="middle" fill="#e8e8e8" font-size="10" font-weight="600">GitHub Copilot</text>
+  <text x="498" y="186" text-anchor="middle" fill="#8a8a8a" font-size="8.5">$APPDATA/Code/User/mcp.json</text>
+  <text x="498" y="196" text-anchor="middle" fill="#8a8a8a" font-size="8">servers  JSON  (VS Code)</text>
+
+  <!-- Backup box -->
+  <rect x="408" y="212" width="180" height="36" fill="#141414" rx="6" stroke="#2e2e2e" stroke-dasharray="4,2"/>
+  <text x="498" y="226" text-anchor="middle" fill="#8a8a8a" font-size="9">Auto-backup before write</text>
+  <text x="498" y="240" text-anchor="middle" fill="#4a4a4a" font-size="8">~/.aiem/backups/&lt;ide&gt;/&lt;ts&gt;/</text>
+  <line x1="374" y1="145" x2="408" y2="230" stroke="#2e2e2e" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#b)"/>
+
+  <!-- Commands -->
+  <rect x="20" y="185" width="380" height="140" fill="#141414" rx="8" stroke="#222222"/>
+  <text x="36" y="203" fill="#8a8a8a" font-size="10" font-weight="500" letter-spacing="1">KEY COMMANDS</text>
+  <text x="36" y="222" fill="#4a9eff" font-size="9.5" font-family="'Consolas',monospace">aiem mcp add filesystem \</text>
+  <text x="36" y="235" fill="#4a9eff" font-size="9.5" font-family="'Consolas',monospace">  --type stdio --command npx … \</text>
+  <text x="36" y="248" fill="#4a9eff" font-size="9.5" font-family="'Consolas',monospace">  --target codex,claude-code,copilot</text>
+  <text x="36" y="265" fill="#4a9eff" font-size="9.5" font-family="'Consolas',monospace">aiem mcp sync --dry-run</text>
+  <text x="36" y="278" fill="#4a9eff" font-size="9.5" font-family="'Consolas',monospace">aiem mcp sync</text>
+  <text x="36" y="295" fill="#4a9eff" font-size="9.5" font-family="'Consolas',monospace">aiem mcp sync --ide copilot --project .</text>
+  <text x="36" y="312" fill="#4a9eff" font-size="9.5" font-family="'Consolas',monospace">aiem mcp import --from codex</text>
+
+  <!-- Transport types -->
+  <rect x="614" y="55" width="226" height="245" fill="#181818" rx="8" stroke="#2e2e2e"/>
+  <text x="727" y="76" text-anchor="middle" fill="#e8e8e8" font-size="10" font-weight="600">Transport Types</text>
+  <line x1="624" y1="82" x2="830" y2="82" stroke="#2e2e2e"/>
+  <text x="630" y="100" fill="#e8e8e8" font-size="10" font-weight="600">stdio</text>
+  <text x="630" y="115" fill="#8a8a8a" font-size="9">command + args + cwd + env</text>
+  <text x="630" y="128" fill="#8a8a8a" font-size="9">All three IDEs</text>
+  <line x1="624" y1="136" x2="830" y2="136" stroke="#2e2e2e" stroke-dasharray="3,2"/>
+  <text x="630" y="154" fill="#e8e8e8" font-size="10" font-weight="600">http / sse</text>
+  <text x="630" y="169" fill="#8a8a8a" font-size="9">url + headers</text>
+  <text x="630" y="182" fill="#8a8a8a" font-size="9">Claude Code · Copilot</text>
+  <text x="630" y="195" fill="#4a4a4a" font-size="8">skipped on Codex</text>
+  <line x1="624" y1="203" x2="830" y2="203" stroke="#2e2e2e" stroke-dasharray="3,2"/>
+  <text x="630" y="220" fill="#e8e8e8" font-size="10" font-weight="600">Secrets in env/headers</text>
+  <text x="630" y="235" fill="#8a8a8a" font-size="9">Use vault values via</text>
+  <text x="630" y="250" fill="#4a9eff" font-size="9" font-family="'Consolas',monospace">${secret:API_KEY}</text>
+  <text x="630" y="265" fill="#8a8a8a" font-size="9">expanded at sync time</text>
+  <text x="630" y="280" fill="#8a8a8a" font-size="9">values never written to disk</text>
+
+  <defs>
+    <marker id="b" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#4a4a4a"/>
+    </marker>
+  </defs>
+</svg>

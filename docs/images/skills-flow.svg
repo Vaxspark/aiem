@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 300" width="860" height="300" font-family="'Segoe UI',system-ui,sans-serif">
+  <rect width="860" height="300" fill="#0e0e0e" rx="14"/>
+  <text x="430" y="32" text-anchor="middle" fill="#e8e8e8" font-size="14" font-weight="600" letter-spacing="0.5">Skills Deployment Flow</text>
+
+  <!-- Step boxes -->
+  <!-- 1. GitHub -->
+  <rect x="20" y="56" width="140" height="80" fill="#181818" rx="8" stroke="#2e2e2e"/>
+  <text x="90" y="88" text-anchor="middle" fill="#ffffff" font-size="20">⬡</text>
+  <text x="90" y="107" text-anchor="middle" fill="#e8e8e8" font-size="11" font-weight="600">GitHub</text>
+  <text x="90" y="122" text-anchor="middle" fill="#8a8a8a" font-size="9">owner/repo</text>
+  <text x="90" y="134" text-anchor="middle" fill="#8a8a8a" font-size="9">//subdir@ref</text>
+
+  <!-- arrow -->
+  <line x1="160" y1="96" x2="192" y2="96" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="176" y="90" text-anchor="middle" fill="#8a8a8a" font-size="9">zipball</text>
+
+  <!-- 2. aiem registry -->
+  <rect x="192" y="56" width="160" height="80" fill="#181818" rx="8" stroke="#2e2e2e"/>
+  <text x="272" y="84" text-anchor="middle" fill="#e8e8e8" font-size="11" font-weight="600">~/.aiem/skills/</text>
+  <text x="272" y="99" text-anchor="middle" fill="#8a8a8a" font-size="9">owner__repo__subdir/</text>
+  <text x="272" y="112" text-anchor="middle" fill="#8a8a8a" font-size="9">index.json  (metadata)</text>
+  <text x="272" y="125" text-anchor="middle" fill="#8a8a8a" font-size="9">sha256  version  source</text>
+
+  <!-- arrow -->
+  <line x1="352" y1="96" x2="386" y2="96" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="369" y="90" text-anchor="middle" fill="#8a8a8a" font-size="9">deploy</text>
+
+  <!-- 3. Scope decision -->
+  <rect x="386" y="56" width="148" height="80" fill="#181818" rx="8" stroke="#2e2e2e"/>
+  <text x="460" y="84" text-anchor="middle" fill="#e8e8e8" font-size="11" font-weight="600">Scope</text>
+  <text x="460" y="99" text-anchor="middle" fill="#4abb6a" font-size="9">~ (user / global)</text>
+  <text x="460" y="112" text-anchor="middle" fill="#8a8a8a" font-size="9">or</text>
+  <text x="460" y="125" text-anchor="middle" fill="#6aabff" font-size="9">/abs/path (project)</text>
+
+  <!-- arrow -->
+  <line x1="534" y1="96" x2="566" y2="96" stroke="#3a3a3a" stroke-width="1.5" marker-end="url(#a)"/>
+  <text x="550" y="90" text-anchor="middle" fill="#8a8a8a" font-size="9">symlink</text>
+
+  <!-- 4. IDE dirs -->
+  <rect x="566" y="48" width="272" height="112" fill="#181818" rx="8" stroke="#2e2e2e"/>
+  <text x="702" y="68" text-anchor="middle" fill="#e8e8e8" font-size="11" font-weight="600">IDE Skills Directories</text>
+  <!-- 2 columns -->
+  <text x="620" y="86" text-anchor="middle" fill="#8a8a8a" font-size="9">.claude/skills/</text>
+  <text x="756" y="86" text-anchor="middle" fill="#8a8a8a" font-size="9">.cursor/skills/</text>
+  <text x="620" y="99" text-anchor="middle" fill="#8a8a8a" font-size="9">.codex/skills/</text>
+  <text x="756" y="99" text-anchor="middle" fill="#8a8a8a" font-size="9">.windsurf/skills/</text>
+  <text x="620" y="112" text-anchor="middle" fill="#8a8a8a" font-size="9">.github/skills/</text>
+  <text x="756" y="112" text-anchor="middle" fill="#8a8a8a" font-size="9">.trae/skills/</text>
+  <text x="620" y="125" text-anchor="middle" fill="#8a8a8a" font-size="9">.kiro/skills/</text>
+  <text x="756" y="125" text-anchor="middle" fill="#8a8a8a" font-size="9">.qoder/skills/</text>
+  <text x="702" y="148" text-anchor="middle" fill="#4a4a4a" font-size="8">symlink → ~/.aiem/skills/owner__repo/</text>
+
+  <!-- Commands row -->
+  <rect x="20" y="175" width="820" height="108" fill="#141414" rx="8" stroke="#222222"/>
+  <text x="36" y="193" fill="#8a8a8a" font-size="10" font-weight="500" letter-spacing="1">KEY COMMANDS</text>
+  <!-- col 1 -->
+  <text x="40" y="212" fill="#4a9eff" font-size="10" font-family="'Consolas',monospace">aiem skill add anthropics/skills</text>
+  <text x="40" y="228" fill="#8a8a8a" font-size="9">Download &amp; register from GitHub</text>
+  <text x="40" y="248" fill="#4a9eff" font-size="10" font-family="'Consolas',monospace">aiem skill add org/repo//subdir@v1</text>
+  <text x="40" y="264" fill="#8a8a8a" font-size="9">Specific subdir, pinned tag</text>
+  <!-- col 2 -->
+  <text x="310" y="212" fill="#4a9eff" font-size="10" font-family="'Consolas',monospace">aiem skill deploy id --ide claude-code</text>
+  <text x="310" y="228" fill="#8a8a8a" font-size="9">Deploy to user scope</text>
+  <text x="310" y="248" fill="#4a9eff" font-size="10" font-family="'Consolas',monospace">aiem skill deploy id --ide vscode --project .</text>
+  <text x="310" y="264" fill="#8a8a8a" font-size="9">Deploy to project scope</text>
+  <!-- col 3 -->
+  <text x="620" y="212" fill="#4a9eff" font-size="10" font-family="'Consolas',monospace">aiem skill update id</text>
+  <text x="620" y="228" fill="#8a8a8a" font-size="9">Pull latest from GitHub</text>
+  <text x="620" y="248" fill="#4a9eff" font-size="10" font-family="'Consolas',monospace">aiem skill list / remove id</text>
+  <text x="620" y="264" fill="#8a8a8a" font-size="9">List or remove</text>
+
+  <defs>
+    <marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+      <path d="M0,0 L6,3 L0,6 Z" fill="#4a4a4a"/>
+    </marker>
+  </defs>
+</svg>
