@@ -32,16 +32,28 @@ A lightweight **Web UI** (`aiem serve`) is included for headless remote manageme
 
 ### Installation
 
-#### Pre-built binaries (recommended)
+#### One-line install (recommended)
 
-Download the latest release from the [Releases page](https://github.com/Vaxspark/aiem/releases):
+**Linux / macOS:**
+```sh
+curl -fsSL https://raw.githubusercontent.com/Vaxspark/aiem/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+```powershell
+irm https://raw.githubusercontent.com/Vaxspark/aiem/main/install.ps1 | iex
+```
+
+The script downloads the latest binary, places it in `~/.local/bin` (Linux/macOS) or `%LOCALAPPDATA%\aiem` (Windows), and adds it to your `PATH` automatically.
+
+#### Manual download
+
+If you prefer, grab the binary directly from the [Releases page](https://github.com/Vaxspark/aiem/releases):
 
 | Platform | Binary |
 |---|---|
 | Windows x86_64 | `aiem-windows-x86_64.zip` |
 | Linux x86_64 (musl, static) | `aiem-linux-x86_64-musl.tar.gz` |
-
-Extract and place the `aiem` binary somewhere on your `PATH`.
 
 #### Build from source
 
@@ -194,16 +206,28 @@ A native desktop GUI is available as a separate binary (`aiem-gui`). It provides
 
 ### 安装
 
-#### 使用预编译二进制（推荐）
+#### 一键安装（推荐）
 
-从 [Releases 页面](https://github.com/Vaxspark/aiem/releases) 下载最新版本：
+**Linux / macOS：**
+```sh
+curl -fsSL https://raw.githubusercontent.com/Vaxspark/aiem/main/install.sh | sh
+```
+
+**Windows（PowerShell）：**
+```powershell
+irm https://raw.githubusercontent.com/Vaxspark/aiem/main/install.ps1 | iex
+```
+
+脚本会自动下载最新版二进制并配置好 PATH，运行完即可直接使用 `aiem` 命令。
+
+#### 手动下载
+
+也可以从 [Releases 页面](https://github.com/Vaxspark/aiem/releases) 直接下载：
 
 | 平台 | 文件 |
 |---|---|
 | Windows x86_64 | `aiem-windows-x86_64.zip` |
 | Linux x86_64（musl 静态链接） | `aiem-linux-x86_64-musl.tar.gz` |
-
-解压后将 `aiem` 可执行文件放入 `PATH` 即可。
 
 #### 源码编译
 
