@@ -81,7 +81,7 @@ dependencies = [
 
 [[package]]
 name = "aiem-cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aiem-core",
  "aiem-web",
@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "aiem-core"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "aiem-gui"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aiem-core",
  "anyhow",
@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "aiem-web"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aiem-core",
  "anyhow",
@@ -2299,6 +2299,7 @@ checksum = "eebcc3aff044e5944a8fbaf69eb277d11986064cba30c468730e8b9909fb551c"
 dependencies = [
  "byteorder",
  "dbus-secret-service",
+ "linux-keyutils",
  "log",
  "security-framework 2.11.1",
  "security-framework 3.7.0",
@@ -2368,6 +2369,16 @@ dependencies = [
  "libc",
  "plain",
  "redox_syscall 0.7.4",
+]
+
+[[package]]
+name = "linux-keyutils"
+version = "0.2.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "83270a18e9f90d0707c41e9f35efada77b64c0e6f3f1810e71c8368a864d5590"
+dependencies = [
+ "bitflags 2.11.1",
+ "libc",
 ]
 
 [[package]]

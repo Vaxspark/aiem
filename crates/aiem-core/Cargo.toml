@@ -33,5 +33,8 @@ keyring = { version = "3", default-features = false, features = ["windows-native
 [target.'cfg(target_os = "macos")'.dependencies]
 keyring = { version = "3", default-features = false, features = ["apple-native"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+[target.'cfg(all(target_os = "linux", not(target_env = "musl")))'.dependencies]
 keyring = { version = "3", default-features = false, features = ["sync-secret-service"] }
+
+[target.'cfg(all(target_os = "linux", target_env = "musl"))'.dependencies]
+keyring = { version = "3", default-features = false, features = ["linux-native"] }
