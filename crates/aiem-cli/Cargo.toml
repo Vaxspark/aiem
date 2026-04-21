@@ -1,0 +1,29 @@
+[package]
+name = "aiem-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "aiem CLI - unified AI skills & MCP manager"
+
+[[bin]]
+name = "aiem"
+path = "src/main.rs"
+
+[dependencies]
+aiem-core = { path = "../aiem-core" }
+aiem-web  = { path = "../aiem-web", optional = true }
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+indicatif.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+rpassword = "7"
+
+[features]
+default = ["web"]
+web = ["dep:aiem-web"]

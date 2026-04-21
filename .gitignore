@@ -1,0 +1,17 @@
+/target
+**/*.rs.bk
+Cargo.lock.bak
+.DS_Store
+.vscode/
+.idea/
+*.log
+
+# Local AI assistant skill data (not part of source distribution)
+.claude/
+
+# OS / editor
+Thumbs.db
+*.swp
+*.swo
+.env
+.env.local

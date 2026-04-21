@@ -1,0 +1,318 @@
+//! MCP view — feature parity with the desktop GUI.
+
+use std::collections::BTreeMap;
+
+use axum::extract::{Form, Path, Query, State};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
+use axum::Router;
+use maud::{html, Markup};
+use serde::Deserialize;
+
+use aiem_core::mcp::model::{McpServer, McpTransport};
+use aiem_core::mcp::{self, McpRegistry};
+
+use crate::events::ResourceKind;
+use crate::layout::{btn_danger, btn_primary, btn_secondary, card, empty_state, page, page_header, tag, TagKind};
+use crate::state::AppState;
+use crate::tasks::{invalidate, toast_error, toast_info};
+
+pub fn router() -> Router<AppState> {
+    Router::new()
+        .route("/mcp", get(index))
+        .route("/mcp/fragment", get(fragment))
+        .route("/mcp/add-json", post(add_json))
+        .route("/mcp/add-quick", post(add_quick))
+        .route("/mcp/:name/toggle", post(toggle))
+        .route("/mcp/:name/remove", post(remove))
+        .route("/mcp/sync", post(sync_all))
+}
+
+const TEMPLATE: &str = r#"{
+  "server-name": {
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "C:\\"],
+    "env": {},
+    "targets": ["codex", "claude-code", "copilot"]
+  }
+}"#;
+
+#[derive(Deserialize, Default)]
+struct ListQuery { #[serde(default)] q: String }
+
+async fn index(State(st): State<AppState>, Query(q): Query<ListQuery>) -> Markup {
+    let reg = st.mcp().ok();
+    let body = html! {
+        (page_header("MCP Servers", "Register Model Context Protocol servers and sync them to every IDE.", html! {
+            form hx-post="/mcp/sync" hx-swap="none" { (btn_secondary("Sync all IDEs")) }
+            button type="button" class="btn-primary" onclick="toggleHidden('mcp-add')" { "+ Add server" }
+        }))
+
+        div id="mcp-add" hidden { (add_forms()) }
+
+        form class="aiem-card" style="display:flex;gap:8px;align-items:center;margin-bottom:12px"
+             hx-get="/mcp/fragment" hx-target="#mcp-list" hx-trigger="input changed delay:200ms from:input[name=q], refresh"
+             hx-swap="innerHTML" {
+            label class="label" style="margin:0;min-width:40px" { "Filter" }
+            input name="q" class="field" placeholder="name" value=(q.q);
+        }
+
+        div id="mcp-list" data-resource="mcp"
+            hx-get="/mcp/fragment" hx-trigger="refresh from:body"
+            hx-swap="innerHTML" { (render(reg.as_ref(), &q.q)) }
+
+        script { "function toggleHidden(id){const el=document.getElementById(id);el.toggleAttribute('hidden');}" }
+    };
+    page("MCP", "/mcp", body)
+}
+
+async fn fragment(State(st): State<AppState>, Query(q): Query<ListQuery>) -> Markup {
+    render(st.mcp().ok().as_ref(), &q.q)
+}
+
+fn add_forms() -> Markup {
+    card(html! {
+        div class="text-sm font-semibold mb-1" { "Add MCP server — paste JSON (Claude / Codex format)" }
+        div class="meta mb-3" { "Supports a single server, or a map of name → config. Use command+args for stdio, or url for http/sse." }
+        form hx-post="/mcp/add-json" hx-swap="none"
+             hx-on--after-request="this.reset();document.getElementById('mcp-add').setAttribute('hidden','');" {
+            textarea name="json" class="field" rows="10" required { (TEMPLATE) }
+            div class="flex items-center gap-2" style="margin-top:8px" {
+                (btn_primary("Save"))
+                button type="button" class="btn-ghost" onclick="toggleHidden('mcp-quick')" { "Or use quick form" }
+                button type="button" class="btn-ghost"
+                       onclick="document.getElementById('mcp-add').setAttribute('hidden','')" { "Cancel" }
+            }
+        }
+
+        div id="mcp-quick" hidden style="margin-top:12px;border-top:1px solid var(--stroke);padding-top:12px" {
+            div class="text-xs font-semibold mb-2" { "Quick stdio server" }
+            form hx-post="/mcp/add-quick" hx-swap="none"
+                 hx-on--after-request="this.reset()"
+                 class="grid gap-3" style="grid-template-columns:repeat(4,1fr)" {
+                div { label class="label" { "Name *" } input name="name" required class="field"; }
+                div { label class="label" { "Command *" } input name="command" required placeholder="npx" class="field"; }
+                div style="grid-column:span 2" { label class="label" { "Args" } input name="args" placeholder="-y @modelcontextprotocol/server-filesystem C:\\" class="field"; }
+                div style="grid-column:span 3" { label class="label" { "Targets (comma)" } input name="targets" value="codex,claude-code,copilot" class="field"; }
+                div class="flex items-end" { (btn_primary("Add")) }
+            }
+        }
+    })
+}
+
+fn render(reg: Option<&McpRegistry>, filter: &str) -> Markup {
+    let Some(reg) = reg else {
+        return html! { div class="aiem-card" style="color:var(--danger)" { "Failed to load MCP registry." } };
+    };
+    let fl = filter.trim().to_ascii_lowercase();
+    let items: Vec<&McpServer> = reg.list()
+        .filter(|s| fl.is_empty() || s.name.to_ascii_lowercase().contains(&fl))
+        .collect();
+    if reg.list().count() == 0 {
+        return empty_state("No MCP servers yet", "Click \"+ Add server\" to register one.");
+    }
+    if items.is_empty() {
+        return empty_state("No matches", "Try a different filter.");
+    }
+    html! {
+        @for s in &items { (render_card(s)) }
+    }
+}
+
+fn render_card(s: &McpServer) -> Markup {
+    let (kind, detail) = match &s.transport {
+        McpTransport::Stdio { command, args, env, cwd } => {
+            let mut d = format!("{command} {}", args.join(" "));
+            if let Some(cwd) = cwd { d.push_str(&format!("  (cwd: {cwd})")); }
+            if !env.is_empty() {
+                d.push_str(&format!("  [env: {}]", env.keys().cloned().collect::<Vec<_>>().join(",")));
+            }
+            ("stdio", d)
+        }
+        McpTransport::Http { url, .. } => ("http", url.clone()),
+        McpTransport::Sse  { url, .. } => ("sse",  url.clone()),
+    };
+    html! {
+        div class="aiem-card" {
+            div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap" {
+                div style="flex:1;min-width:260px" {
+                    div class="row-gap" {
+                        span style="font-weight:600;font-size:14px" { (s.name) }
+                        (tag(kind, TagKind::Neutral))
+                        @if s.disabled { (tag("disabled", TagKind::Danger)) }
+                    }
+                    div class="meta mono" style="margin-top:4px;word-break:break-all" { (detail) }
+                    @if let Some(d) = &s.description { div class="meta" style="margin-top:2px" { (d) } }
+                    @if !s.targets.is_empty() {
+                        div class="row-gap" style="margin-top:6px" {
+                            @for t in &s.targets { (tag(t, TagKind::Success)) }
+                        }
+                    }
+                }
+                div style="display:flex;gap:6px;align-items:center" {
+                    form hx-post=(format!("/mcp/{}/toggle", s.name)) hx-swap="none" {
+                        (btn_secondary(if s.disabled { "Enable" } else { "Disable" }))
+                    }
+                    form hx-post=(format!("/mcp/{}/remove", s.name)) hx-swap="none"
+                         hx-confirm="Remove this MCP server from the registry?" {
+                        (btn_danger("Remove"))
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ─── Handlers ────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct JsonForm { json: String }
+
+async fn add_json(State(st): State<AppState>, Form(f): Form<JsonForm>) -> Response {
+    let tx = st.events.clone();
+    let _g = st.write_lock.lock().await;
+    let servers = match parse_json_servers(&f.json) {
+        Ok(v) => v,
+        Err(e) => { toast_error(&tx, e); return http_ok(); }
+    };
+    let mut reg = match McpRegistry::load() {
+        Ok(r) => r, Err(e) => { toast_error(&tx, format!("{e}")); return http_ok(); }
+    };
+    let n = servers.len();
+    for s in servers { reg.upsert(s); }
+    if let Err(e) = reg.save() { toast_error(&tx, format!("save: {e}")); return http_ok(); }
+    toast_info(&tx, format!("saved {n} server(s)"));
+    invalidate(&tx, ResourceKind::Mcp);
+    http_ok()
+}
+
+#[derive(Deserialize)]
+struct QuickForm {
+    name: String,
+    command: String,
+    #[serde(default)] args: String,
+    #[serde(default)] targets: String,
+}
+
+async fn add_quick(State(st): State<AppState>, Form(f): Form<QuickForm>) -> Response {
+    let tx = st.events.clone();
+    let _g = st.write_lock.lock().await;
+    let mut reg = match McpRegistry::load() {
+        Ok(r) => r, Err(e) => { toast_error(&tx, format!("{e}")); return http_ok(); }
+    };
+    let args: Vec<String> = f.args.split_whitespace().map(|s| s.to_string()).collect();
+    let targets: Vec<String> = f.targets.split(',')
+        .filter_map(|s| { let t = s.trim(); if t.is_empty() { None } else { Some(t.to_string()) } })
+        .collect();
+    let name = f.name.clone();
+    reg.upsert(McpServer {
+        name: name.clone(),
+        transport: McpTransport::Stdio { command: f.command, args, env: Default::default(), cwd: None },
+        targets,
+        description: None,
+        tags: vec![],
+        disabled: false,
+    });
+    if let Err(e) = reg.save() { toast_error(&tx, format!("save: {e}")); return http_ok(); }
+    toast_info(&tx, format!("added {name}"));
+    invalidate(&tx, ResourceKind::Mcp);
+    http_ok()
+}
+
+async fn toggle(State(st): State<AppState>, Path(name): Path<String>) -> Response {
+    let tx = st.events.clone();
+    let _g = st.write_lock.lock().await;
+    let mut reg = match McpRegistry::load() { Ok(r) => r, Err(e) => { toast_error(&tx, format!("{e}")); return http_ok(); } };
+    let Some(s) = reg.get_mut(&name) else { toast_error(&tx, "not found"); return http_ok(); };
+    s.disabled = !s.disabled;
+    let disabled = s.disabled;
+    if let Err(e) = reg.save() { toast_error(&tx, format!("{e}")); return http_ok(); }
+    toast_info(&tx, format!("{name} {}", if disabled {"disabled"} else {"enabled"}));
+    invalidate(&tx, ResourceKind::Mcp);
+    http_ok()
+}
+
+async fn remove(State(st): State<AppState>, Path(name): Path<String>) -> Response {
+    let tx = st.events.clone();
+    let _g = st.write_lock.lock().await;
+    let mut reg = match McpRegistry::load() { Ok(r) => r, Err(e) => { toast_error(&tx, format!("{e}")); return http_ok(); } };
+    match reg.remove(&name) {
+        Ok(_) => { let _ = reg.save(); toast_info(&tx, format!("removed {name}")); invalidate(&tx, ResourceKind::Mcp); }
+        Err(e) => toast_error(&tx, format!("{e}")),
+    }
+    http_ok()
+}
+
+async fn sync_all(State(st): State<AppState>) -> Response {
+    let tx = st.events.clone();
+    let _g = st.write_lock.lock().await;
+    let reg = match McpRegistry::load() { Ok(r) => r, Err(e) => { toast_error(&tx, format!("{e}")); return http_ok(); } };
+    let plan = mcp::sync::plan(&reg, &[]);
+    match mcp::sync::execute(&reg, &plan, None) {
+        Ok(touched) => {
+            let msg = if touched.is_empty() {
+                "nothing to sync".to_string()
+            } else {
+                touched.iter().map(|(ide,p)| format!("{ide}→{}", p.display())).collect::<Vec<_>>().join(", ")
+            };
+            toast_info(&tx, format!("synced: {msg}"));
+            invalidate(&tx, ResourceKind::Mcp);
+        }
+        Err(e) => toast_error(&tx, format!("sync: {e}")),
+    }
+    http_ok()
+}
+
+fn http_ok() -> Response { (axum::http::StatusCode::OK, "ok").into_response() }
+
+// ─── JSON parsing (mirrors GUI) ──────────────────────────────────────────
+
+fn parse_json_servers(input: &str) -> Result<Vec<McpServer>, String> {
+    let val: serde_json::Value = serde_json::from_str(input.trim())
+        .map_err(|e| format!("JSON parse error: {e}"))?;
+    let obj = val.as_object().ok_or("Expected a JSON object")?;
+    let mut servers = Vec::new();
+    if obj.contains_key("command") || obj.contains_key("url") {
+        let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed").to_string();
+        servers.push(json_to_server(&name, &val)?);
+    } else {
+        for (name, config) in obj { servers.push(json_to_server(name, config)?); }
+    }
+    if servers.is_empty() { return Err("No servers found in JSON".into()); }
+    Ok(servers)
+}
+
+fn json_to_server(name: &str, val: &serde_json::Value) -> Result<McpServer, String> {
+    let obj = val.as_object().ok_or(format!("{name}: expected object"))?;
+    let transport = if let Some(cmd) = obj.get("command").and_then(|v| v.as_str()) {
+        let args: Vec<String> = obj.get("args").and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+        let env: BTreeMap<String, String> = obj.get("env").and_then(|v| v.as_object())
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+            .unwrap_or_default();
+        let cwd = obj.get("cwd").and_then(|v| v.as_str()).map(String::from);
+        McpTransport::Stdio { command: cmd.to_string(), args, env, cwd }
+    } else if let Some(url) = obj.get("url").and_then(|v| v.as_str()) {
+        let headers: BTreeMap<String, String> = obj.get("headers").and_then(|v| v.as_object())
+            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+            .unwrap_or_default();
+        let kind = obj.get("type").and_then(|v| v.as_str()).unwrap_or("sse");
+        if kind == "http" { McpTransport::Http { url: url.to_string(), headers } }
+        else { McpTransport::Sse { url: url.to_string(), headers } }
+    } else {
+        return Err(format!("{name}: need 'command' (stdio) or 'url' (http/sse)"));
+    };
+    let targets: Vec<String> = obj.get("targets").and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .unwrap_or_else(|| vec!["codex".into(), "claude-code".into(), "copilot".into()]);
+    let description = obj.get("description").and_then(|v| v.as_str()).map(String::from);
+    Ok(McpServer {
+        name: name.to_string(),
+        transport,
+        targets,
+        description,
+        tags: vec![],
+        disabled: false,
+    })
+}

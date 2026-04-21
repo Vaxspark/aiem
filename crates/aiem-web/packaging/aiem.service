@@ -1,0 +1,19 @@
+[Unit]
+Description=aiem Web UI (skills & MCP manager)
+After=network.target
+
+[Service]
+Type=simple
+# Replace USERNAME with your Linux user.
+User=USERNAME
+# Bind to loopback only. Access from your laptop via:
+#   ssh -L 8787:localhost:8787 USERNAME@HOST
+ExecStart=/usr/local/bin/aiem serve --host 127.0.0.1 --port 8787
+Restart=on-failure
+RestartSec=3
+# Environment (optional):
+#   Environment="GITHUB_TOKEN=ghp_..."
+#   Environment="AIEM_HOME=/home/USERNAME/.aiem"
+
+[Install]
+WantedBy=default.target

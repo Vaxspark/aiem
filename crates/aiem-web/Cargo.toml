@@ -1,0 +1,30 @@
+[package]
+name = "aiem-web"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "aiem Web UI - headless browser-based management"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+aiem-core = { path = "../aiem-core" }
+anyhow.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+axum.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+tokio-stream.workspace = true
+maud.workspace = true
+futures-util.workspace = true
+sha2.workspace = true
+hex.workspace = true
+walkdir.workspace = true
+urlencoding = "2"
