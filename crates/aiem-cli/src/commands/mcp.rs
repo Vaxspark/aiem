@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use aiem_core::mcp::adapters;
+use aiem_core::mcp::deploy as mcp_deploy;
 use aiem_core::mcp::model::{McpServer, McpTransport};
 use aiem_core::mcp::sync;
 use aiem_core::mcp::McpRegistry;
@@ -68,6 +69,24 @@ pub enum McpCmd {
     },
     /// List IDEs that support MCP sync.
     Supported,
+    /// Attach an MCP server to a registered project and sync to its IDE
+    /// config files immediately.
+    Deploy {
+        /// MCP server name (as registered in aiem's registry).
+        name: String,
+        /// Path to a project registered with `aiem project add`.
+        #[arg(long)]
+        project: PathBuf,
+    },
+    /// Detach an MCP server from a registered project and remove it from the
+    /// project's IDE config files.
+    Undeploy {
+        /// MCP server name.
+        name: String,
+        /// Path to a project registered with `aiem project add`.
+        #[arg(long)]
+        project: PathBuf,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -128,7 +147,30 @@ pub fn run(cmd: McpCmd) -> anyhow::Result<()> {
             for ide in adapters::SUPPORTED { println!("{ide}"); }
             Ok(())
         }
+        McpCmd::Deploy { name, project } => deploy_cmd(&name, &project),
+        McpCmd::Undeploy { name, project } => undeploy_cmd(&name, &project),
     }
+}
+
+fn deploy_cmd(name: &str, project: &std::path::Path) -> anyhow::Result<()> {
+    let touched = mcp_deploy::deploy_to_project(name, project)?;
+    if touched.is_empty() {
+        println!("(server `{name}` attached to project but no IDE configs were written — check server.targets)");
+    } else {
+        for (ide, path) in touched {
+            println!("✓ {ide:<12} → {}", path.display());
+        }
+    }
+    Ok(())
+}
+
+fn undeploy_cmd(name: &str, project: &std::path::Path) -> anyhow::Result<()> {
+    let touched = mcp_deploy::undeploy_from_project(name, project)?;
+    println!("✓ removed `{name}` from project");
+    for (ide, path) in touched {
+        println!("  re-synced {ide:<12} → {}", path.display());
+    }
+    Ok(())
 }
 
 fn add(a: AddArgs) -> anyhow::Result<()> {

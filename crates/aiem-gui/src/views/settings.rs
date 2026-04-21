@@ -1,3 +1,4 @@
+use aiem_core::backup::{AutoInterval, BackupConfig};
 use aiem_core::paths;
 use eframe::egui::{self, RichText};
 
@@ -8,10 +9,17 @@ use crate::theme;
 #[derive(Default)]
 pub struct State {
     pub github_token_input: String,
+    // ── Backup ──────────────────────────────────────────────────────────────
+    pub backup_cfg: Option<BackupConfig>,
+    pub backup_repo_input: String,
+    pub backup_token_input: String,    pub backup_proxy_input: String,    pub backup_export_path: String,
+    pub backup_import_path: String,
 }
 
 pub fn show(ui: &mut egui::Ui, app: &mut App) {
     page_header(ui, i18n::t("settings.title"), i18n::t("settings.subtitle"), |_| {});
+
+    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
 
     // Language selector
     card(ui, |ui| {
@@ -119,11 +127,215 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     });
     ui.add_space(10.0);
 
+    render_backup_card(ui, app);
+    ui.add_space(10.0);
+
     card(ui, |ui| {
         ui.label(RichText::new("About").strong().color(theme::TEXT()));
         ui.add_space(6.0);
         ui.label(RichText::new("aiem -- AI Extension Manager").color(theme::TEXT()));
         ui.label(RichText::new(format!("version {}", env!("CARGO_PKG_VERSION"))).small().color(theme::MUTED()));
         ui.label(RichText::new("Pure-Rust desktop app · eframe + egui").small().color(theme::MUTED()));
+    });
+
+    }); // ScrollArea
+}
+
+// ─── Backup & Restore card ────────────────────────────────────────────────────
+
+fn render_backup_card(ui: &mut egui::Ui, app: &mut App) {
+    // Lazy-load config from disk into state on first render.
+    if app.settings_state.backup_cfg.is_none() {
+        let cfg = BackupConfig::load().unwrap_or_default();
+        // Pre-fill repo input from saved config.
+        if app.settings_state.backup_repo_input.is_empty() {
+            if let Some(repo) = &cfg.github_repo {
+                app.settings_state.backup_repo_input = repo.clone();
+            }
+        }
+        // Pre-fill proxy input from saved config.
+        if app.settings_state.backup_proxy_input.is_empty() {
+            if let Some(proxy) = &cfg.http_proxy {
+                app.settings_state.backup_proxy_input = proxy.clone();
+            }
+        }
+        app.settings_state.backup_cfg = Some(cfg);
+    }
+    let cfg = app.settings_state.backup_cfg.as_ref().unwrap();
+    let last_backup_label = cfg.last_backup_ts
+        .map(aiem_core::backup::time_ago)
+        .unwrap_or_else(|| "never".into());
+    let cur_interval = cfg.auto_interval;
+
+    card(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Backup & Restore").strong().color(theme::TEXT()));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(
+                    RichText::new(format!("last backup: {last_backup_label}"))
+                        .small()
+                        .color(theme::MUTED()),
+                );
+            });
+        });
+        ui.add_space(8.0);
+
+        // ── Auto-backup interval ──────────────────────────────────────────
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Auto-backup").color(theme::MUTED()).small());
+            for variant in [AutoInterval::Never, AutoInterval::Daily, AutoInterval::Weekly] {
+                let selected = cur_interval == variant;
+                if ui.selectable_label(selected, variant.label()).clicked() && !selected {
+                    if let Some(cfg) = app.settings_state.backup_cfg.as_mut() {
+                        cfg.auto_interval = variant;
+                        let _ = cfg.save();
+                    }
+                }
+            }
+        });
+        ui.add_space(8.0);
+
+        // ── Local snapshot ────────────────────────────────────────────────
+        ui.label(RichText::new("Local snapshot").strong().small().color(theme::TEXT()));
+        ui.add_space(4.0);
+        ui.horizontal(|ui| {
+            if ui.button("Snapshot now").on_hover_text(
+                "Saves skills_index.json, mcp_servers.json, projects.json into ~/.aiem/snapshots/<ts>/",
+            ).clicked() {
+                app.bus.backup_snapshot();
+            }
+        });
+        ui.add_space(2.0);
+        ui.label(RichText::new("Export to directory").small().color(theme::MUTED()));
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut app.settings_state.backup_export_path)
+                    .hint_text("/path/to/export/dir")
+                    .desired_width(300.0),
+            );
+            let can_export = !app.settings_state.backup_export_path.trim().is_empty();
+            if ui.add_enabled(can_export, egui::Button::new("Export")).clicked() {
+                let dest = std::path::PathBuf::from(
+                    app.settings_state.backup_export_path.trim().to_owned()
+                );
+                app.bus.backup_export_dir(dest);
+            }
+        });
+        ui.add_space(2.0);
+        ui.label(RichText::new("Restore from directory").small().color(theme::MUTED()));
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut app.settings_state.backup_import_path)
+                    .hint_text("/path/to/snapshot/dir")
+                    .desired_width(300.0),
+            );
+            let can_import = !app.settings_state.backup_import_path.trim().is_empty();
+            if ui.add_enabled(can_import, egui::Button::new("Restore")).on_hover_text(
+                "Overwrites current config with the snapshot. Reloads skills & MCP list.",
+            ).clicked() {
+                let src = std::path::PathBuf::from(
+                    app.settings_state.backup_import_path.trim().to_owned()
+                );
+                app.bus.backup_import_dir(src);
+            }
+        });
+
+        ui.add_space(10.0);
+
+        // ── GitHub backup ─────────────────────────────────────────────────
+        ui.label(RichText::new("GitHub backup").strong().small().color(theme::TEXT()));
+        ui.add_space(4.0);
+        ui.label(RichText::new("Repo URL (HTTPS)").small().color(theme::MUTED()));
+        ui.add(
+            egui::TextEdit::singleline(&mut app.settings_state.backup_repo_input)
+                .hint_text("https://github.com/you/my-aiem-backup")
+                .desired_width(360.0),
+        );
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new("Token (leave empty to use saved GITHUB_TOKEN)")
+                .small()
+                .color(theme::MUTED()),
+        );
+        ui.add(
+            egui::TextEdit::singleline(&mut app.settings_state.backup_token_input)
+                .password(true)
+                .hint_text("ghp_... (optional override)")
+                .desired_width(320.0),
+        );
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new("HTTP Proxy (optional, e.g. http://127.0.0.1:7890)")
+                .small()
+                .color(theme::MUTED()),
+        );
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(&mut app.settings_state.backup_proxy_input)
+                    .hint_text("http://127.0.0.1:7890  or  socks5://127.0.0.1:1080")
+                    .desired_width(300.0),
+            );
+            if ui.button("💾  Save settings").on_hover_text(
+                "Persist Repo URL and proxy to ~/.aiem/backup.json; token to GITHUB_TOKEN env var"
+            ).clicked() {
+                let repo  = app.settings_state.backup_repo_input.trim().to_owned();
+                let proxy = app.settings_state.backup_proxy_input.trim().to_owned();
+                let tok   = app.settings_state.backup_token_input.trim().to_owned();
+                if let Some(cfg) = app.settings_state.backup_cfg.as_mut() {
+                    if !repo.is_empty() { cfg.github_repo = Some(repo); }
+                    cfg.http_proxy = if proxy.is_empty() { None } else { Some(proxy) };
+                    let _ = cfg.save();
+                }
+                if !tok.is_empty() {
+                    std::env::set_var("GITHUB_TOKEN", &tok);
+                }
+                app.toast_info("Backup settings saved");
+            }
+        });
+        ui.add_space(4.0);
+        let repo_ok = !app.settings_state.backup_repo_input.trim().is_empty();
+        ui.horizontal(|ui| {
+            if ui.add_enabled(repo_ok, egui::Button::new("🔌  Test connection"))
+                .on_hover_text("Run git ls-remote to verify repo URL, token and proxy")
+                .clicked()
+            {
+                let repo  = app.settings_state.backup_repo_input.trim().to_owned();
+                let token = {
+                    let t = app.settings_state.backup_token_input.trim().to_owned();
+                    if t.is_empty() { None } else { Some(t) }
+                };
+                app.bus.backup_test_connection(repo, token);
+            }
+            if ui.add_enabled(repo_ok, egui::Button::new("Push to GitHub"))
+                .on_hover_text("Commit and push skills_index + mcp_servers to your repo")
+                .clicked()
+            {
+                let repo  = app.settings_state.backup_repo_input.trim().to_owned();
+                let token = {
+                    let t = app.settings_state.backup_token_input.trim().to_owned();
+                    if t.is_empty() { None } else { Some(t) }
+                };
+                app.bus.backup_push_github(repo, token);
+            }
+            if ui.add_enabled(repo_ok, egui::Button::new("Pull from GitHub"))
+                .on_hover_text("Restore config files from your backup repo. Reloads all data.")
+                .clicked()
+            {
+                let repo  = app.settings_state.backup_repo_input.trim().to_owned();
+                let token = {
+                    let t = app.settings_state.backup_token_input.trim().to_owned();
+                    if t.is_empty() { None } else { Some(t) }
+                };
+                app.bus.backup_pull_github(repo, token);
+            }
+        });
+        ui.add_space(2.0);
+        ui.label(
+            RichText::new(
+                "Uses ~/.aiem/backup-git/ as git working tree. Requires git in PATH.",
+            )
+            .small()
+            .color(theme::MUTED()),
+        );
     });
 }

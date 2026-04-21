@@ -53,6 +53,11 @@ pub enum Cmd {
         #[command(subcommand)]
         cmd: commands::discover::DiscoverCmd,
     },
+    /// Backup and restore aiem config files (local snapshots + GitHub).
+    Backup {
+        #[command(subcommand)]
+        cmd: commands::backup::BackupCmd,
+    },
     /// Start the Web UI server (browser-based management, great for headless Linux via SSH port-forward).
     #[cfg(feature = "web")]
     Serve {
@@ -80,6 +85,7 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Secret { cmd } => commands::secret::run(cmd)?,
         Cmd::Profile { cmd } => commands::profile::run(cmd)?,
         Cmd::Discover { cmd } => commands::discover::run(cmd)?,
+        Cmd::Backup { cmd } => commands::backup::run(cmd)?,
         #[cfg(feature = "web")]
         Cmd::Serve { host, port, open } => {
             use std::net::{IpAddr, SocketAddr};

@@ -278,6 +278,38 @@ pub fn mcp_toggle(name: &str, disabled: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub fn mcp_deploy_to_project(name: &str, project: &std::path::Path)
+    -> anyhow::Result<Vec<(String, PathBuf)>>
+{
+    Ok(mcp::deploy::deploy_to_project(name, project)?)
+}
+
+pub fn mcp_undeploy_from_project(name: &str, project: &std::path::Path)
+    -> anyhow::Result<Vec<(String, PathBuf)>>
+{
+    Ok(mcp::deploy::undeploy_from_project(name, project)?)
+}
+
+pub fn mcp_projects_with(name: &str) -> anyhow::Result<Vec<String>> {
+    Ok(mcp::deploy::projects_with(name)?)
+}
+
+pub fn skill_projects_with(id: &str) -> anyhow::Result<Vec<String>> {
+    Ok(aiem_core::skills::registry::projects_with(id)?)
+}
+
+pub fn skill_deploy_to_project(id: &str, ide: &str, project: &std::path::Path)
+    -> anyhow::Result<PathBuf>
+{
+    Ok(aiem_core::skills::deploy::deploy_to_project(id, ide, project)?)
+}
+
+pub fn skill_undeploy_from_project(id: &str, ide: &str, project: &std::path::Path)
+    -> anyhow::Result<()>
+{
+    Ok(aiem_core::skills::deploy::undeploy_from_project(id, ide, project)?)
+}
+
 /// Smart merge using 3-way comparison:
 /// - If `hash(current_file) == original_hash` → not user-modified → overwrite with new version
 /// - If `hash(current_file) != original_hash` → user modified → skip
@@ -336,4 +368,93 @@ fn hash_files(dir: &std::path::Path) -> std::collections::BTreeMap<String, Strin
         }
     }
     map
+}
+
+// ─── Backup tasks ─────────────────────────────────────────────────────────────
+
+impl TaskBus {
+    /// Take a local timestamped snapshot in background.
+    pub fn backup_snapshot(&self) {
+        let tx = self.tx.clone();
+        self.runtime.spawn_blocking(move || {
+            match aiem_core::backup::snapshot_local() {
+                Ok(path) => {
+                    let _ = tx.send(TaskMsg::Info(
+                        format!("Snapshot saved: {}", path.display())
+                    ));
+                }
+                Err(e) => { let _ = tx.send(TaskMsg::Error(format!("Snapshot failed: {e}"))); }
+            }
+        });
+    }
+
+    /// Push backup to GitHub in background.
+    pub fn backup_push_github(&self, repo: String, token: Option<String>) {
+        let tx = self.tx.clone();
+        self.runtime.spawn_blocking(move || {
+            match aiem_core::backup::push_github(&repo, token.as_deref()) {
+                Ok(()) => { let _ = tx.send(TaskMsg::Info("Backup pushed to GitHub".into())); }
+                Err(e) => { let _ = tx.send(TaskMsg::Error(format!("GitHub push failed: {e}"))); }
+            }
+        });
+    }
+
+    /// Quick connectivity check: runs `git ls-remote` without touching local data.
+    pub fn backup_test_connection(&self, repo: String, token: Option<String>) {
+        let tx = self.tx.clone();
+        self.runtime.spawn_blocking(move || {
+            let _ = tx.send(TaskMsg::Info("Testing connection…".into()));
+            match aiem_core::backup::check_connectivity(&repo, token.as_deref()) {
+                Ok(()) => { let _ = tx.send(TaskMsg::Info("✅ Connection OK — repo is reachable".into())); }
+                Err(e) => { let _ = tx.send(TaskMsg::Error(format!("Connection failed: {e}"))); }
+            }
+        });
+    }
+
+    /// Pull (restore) backup from GitHub in background.
+    pub fn backup_pull_github(&self, repo: String, token: Option<String>) {
+        let tx = self.tx.clone();
+        self.runtime.spawn_blocking(move || {
+            match aiem_core::backup::pull_github(&repo, token.as_deref()) {
+                Ok(()) => {
+                    let _ = tx.send(TaskMsg::Info("Restored from GitHub backup".into()));
+                    let _ = tx.send(TaskMsg::SkillsChanged);
+                    let _ = tx.send(TaskMsg::McpChanged);
+                }
+                Err(e) => { let _ = tx.send(TaskMsg::Error(format!("GitHub pull failed: {e}"))); }
+            }
+        });
+    }
+
+    /// Export config files to an explicit destination directory in background.
+    pub fn backup_export_dir(&self, dest: std::path::PathBuf) {
+        let tx = self.tx.clone();
+        self.runtime.spawn_blocking(move || {
+            match aiem_core::backup::export_to_dir(&dest) {
+                Ok(files) => {
+                    let _ = tx.send(TaskMsg::Info(
+                        format!("Exported {} file(s) to {}", files.len(), dest.display())
+                    ));
+                }
+                Err(e) => { let _ = tx.send(TaskMsg::Error(format!("Export failed: {e}"))); }
+            }
+        });
+    }
+
+    /// Import (restore) config files from a source directory in background.
+    pub fn backup_import_dir(&self, src: std::path::PathBuf) {
+        let tx = self.tx.clone();
+        self.runtime.spawn_blocking(move || {
+            match aiem_core::backup::import_from_dir(&src) {
+                Ok(files) => {
+                    let _ = tx.send(TaskMsg::Info(
+                        format!("Restored {} file(s) from {}", files.len(), src.display())
+                    ));
+                    let _ = tx.send(TaskMsg::SkillsChanged);
+                    let _ = tx.send(TaskMsg::McpChanged);
+                }
+                Err(e) => { let _ = tx.send(TaskMsg::Error(format!("Import failed: {e}"))); }
+            }
+        });
+    }
 }

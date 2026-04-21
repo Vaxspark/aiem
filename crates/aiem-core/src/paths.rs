@@ -32,9 +32,18 @@ pub fn secrets_index_file() -> Result<PathBuf> { Ok(home()?.join("secrets.json")
 pub fn profiles_file() -> Result<PathBuf> { Ok(home()?.join("profiles.json")) }
 pub fn projects_file() -> Result<PathBuf> { Ok(home()?.join("projects.json")) }
 
+/// Timestamped local snapshots: `~/.aiem/snapshots/`
+pub fn snapshots_dir() -> Result<PathBuf> { Ok(home()?.join("snapshots")) }
+
+/// Git working tree used for GitHub push/pull backups: `~/.aiem/backup-git/`
+pub fn backup_git_dir() -> Result<PathBuf> { Ok(home()?.join("backup-git")) }
+
+/// Backup preferences file: `~/.aiem/backup.json`
+pub fn backup_config_file() -> Result<PathBuf> { Ok(home()?.join("backup.json")) }
+
 /// Create all standard dirs if missing.
 pub fn ensure_layout() -> Result<()> {
-    for p in [home()?, skills_dir()?, mcp_dir()?, backups_dir()?, cache_dir()?] {
+    for p in [home()?, skills_dir()?, mcp_dir()?, backups_dir()?, cache_dir()?, snapshots_dir()?] {
         std::fs::create_dir_all(&p)?;
     }
     Ok(())

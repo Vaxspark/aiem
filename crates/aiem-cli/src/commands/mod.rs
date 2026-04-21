@@ -4,6 +4,7 @@ pub mod skill;
 pub mod secret;
 pub mod profile;
 pub mod discover;
+pub mod backup;
 
 use aiem_core::paths;
 

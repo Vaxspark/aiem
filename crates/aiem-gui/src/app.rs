@@ -55,6 +55,8 @@ pub struct App {
     /// Cached OS theme detection, refreshed periodically so switching System mode reflects the actual OS.
     pub detected_os_dark: bool,
     pub last_os_theme_check: Instant,
+    /// Last time we checked whether an auto-backup is due (checked every 60 s).
+    pub last_auto_backup_check: Instant,
 }
 
 impl App {
@@ -90,14 +92,17 @@ impl App {
             lang: Lang::Zh,
             detected_os_dark: detect_os_dark(),
             last_os_theme_check: Instant::now(),
+            last_auto_backup_check: Instant::now(),
         }
     }
 
     pub fn reload_skills(&mut self) {
         self.skills = SkillRegistry::load().unwrap_or_default();
+        self.skills_state.deployed_projects_cache.clear();
     }
     pub fn reload_mcp(&mut self) {
         self.mcp = McpRegistry::load().unwrap_or_default();
+        self.mcp_state.deployed_cache.clear();
     }
 
     pub fn toast_info(&mut self, s: impl Into<String>) {
@@ -164,6 +169,16 @@ impl eframe::App for App {
         let pal = theme::p();
 
         self.drain_task_messages();
+
+        // Auto-backup: check every 60 s whether the configured interval is due.
+        if self.last_auto_backup_check.elapsed() >= std::time::Duration::from_secs(60) {
+            self.last_auto_backup_check = Instant::now();
+            if let Ok(cfg) = aiem_core::backup::BackupConfig::load() {
+                if cfg.is_due() {
+                    self.bus.backup_snapshot();
+                }
+            }
+        }
 
         // Sidebar
         egui::SidePanel::left("sidebar")

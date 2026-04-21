@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crate::fs_util::atomic_write;
+use crate::projects::ProjectStore;
 use crate::{paths, Result};
 
 use super::model::{Skill, SkillIndex};
@@ -38,4 +39,17 @@ impl SkillRegistry {
     pub fn get_mut(&mut self, id: &str) -> Option<&mut Skill> { self.index.skills.get_mut(id) }
     pub fn upsert(&mut self, s: Skill) { self.index.skills.insert(s.id.clone(), s); }
     pub fn remove(&mut self, id: &str) -> Option<Skill> { self.index.skills.remove(id) }
+}
+
+/// Reverse lookup: names of projects whose `skills` contains `skill_id`.
+/// Sorted by project name.
+pub fn projects_with(skill_id: &str) -> Result<Vec<String>> {
+    let store = ProjectStore::load()?;
+    let mut out: Vec<String> = store
+        .list()
+        .filter(|p| p.skills.iter().any(|s| s == skill_id))
+        .map(|p| p.name.clone())
+        .collect();
+    out.sort();
+    Ok(out)
 }

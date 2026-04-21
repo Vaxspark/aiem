@@ -57,18 +57,21 @@ pub fn link_dir(target: &Path, link: &Path) -> Result<LinkKind> {
 
     #[cfg(windows)]
     {
+        // Normalize to backslash separators: cmd.exe's `mklink` treats `/` as
+        // an option prefix, so a path like `E:\proj\.claude/skills\foo` makes
+        // it see `/skills` as an unknown switch → error 123
+        // ("文件名、目录名或卷标语法不正确").
+        let link_s   = link.to_string_lossy().replace('/', "\\");
+        let target_s = target.to_string_lossy().replace('/', "\\");
+
         // Try dir symlink (needs Developer Mode or admin).
-        if std::os::windows::fs::symlink_dir(target, link).is_ok() {
+        if std::os::windows::fs::symlink_dir(&target_s, &link_s).is_ok() {
             return Ok(LinkKind::Symlink);
         }
         // Fall back to a junction via `cmd /c mklink /J`.
         // Must pass entire mklink command as a single string to avoid
         // cmd.exe argument quoting issues ("无效开关" / invalid switch).
-        let cmd_str = format!(
-            "mklink /J \"{}\" \"{}\"",
-            link.display(),
-            target.display()
-        );
+        let cmd_str = format!("mklink /J \"{link_s}\" \"{target_s}\"");
         let status = std::process::Command::new("cmd")
             .args(["/C", &cmd_str])
             .status();

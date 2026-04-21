@@ -10,7 +10,8 @@ use maud::{html, Markup};
 use serde::Deserialize;
 
 use aiem_core::mcp::model::{McpServer, McpTransport};
-use aiem_core::mcp::{self, McpRegistry};
+use aiem_core::mcp::{self, deploy as mcp_deploy, McpRegistry};
+use aiem_core::projects::ProjectStore;
 
 use crate::events::ResourceKind;
 use crate::layout::{btn_danger, btn_primary, btn_secondary, card, empty_state, page, page_header, tag, TagKind};
@@ -25,6 +26,7 @@ pub fn router() -> Router<AppState> {
         .route("/mcp/add-quick", post(add_quick))
         .route("/mcp/:name/toggle", post(toggle))
         .route("/mcp/:name/remove", post(remove))
+        .route("/mcp/:name/deploy-action", post(deploy_action))
         .route("/mcp/sync", post(sync_all))
 }
 
@@ -61,7 +63,7 @@ async fn index(State(st): State<AppState>, Query(q): Query<ListQuery>) -> Markup
             hx-get="/mcp/fragment" hx-trigger="refresh from:body"
             hx-swap="innerHTML" { (render(reg.as_ref(), &q.q)) }
 
-        script { "function toggleHidden(id){const el=document.getElementById(id);el.toggleAttribute('hidden');}" }
+        script { "function toggleHidden(id){const el=document.getElementById(id);el.toggleAttribute('hidden');}\nfunction updateMcpDeployBtn(sel){const opt=sel.options[sel.selectedIndex];const state=opt.dataset.state||'sync';const btn=sel.form.querySelector('button.aiem-mcp-deploy-btn');if(!btn)return;btn.textContent=state==='sync'?'Sync':state==='deploy'?'Deploy':'Undeploy';btn.className='aiem-mcp-deploy-btn '+(state==='undeploy'?'btn-danger':'btn-primary');}" }
     };
     page("MCP", "/mcp", body)
 }
@@ -114,12 +116,16 @@ fn render(reg: Option<&McpRegistry>, filter: &str) -> Markup {
     if items.is_empty() {
         return empty_state("No matches", "Try a different filter.");
     }
+    // Registered projects: (path, display_name) — used by the per-card scope picker.
+    let projects: Vec<(String, String)> = ProjectStore::load()
+        .map(|s| s.list().map(|p| (p.path.clone(), p.name.clone())).collect())
+        .unwrap_or_default();
     html! {
-        @for s in &items { (render_card(s)) }
+        @for s in &items { (render_card(s, &projects)) }
     }
 }
 
-fn render_card(s: &McpServer) -> Markup {
+fn render_card(s: &McpServer, projects: &[(String, String)]) -> Markup {
     let (kind, detail) = match &s.transport {
         McpTransport::Stdio { command, args, env, cwd } => {
             let mut d = format!("{command} {}", args.join(" "));
@@ -132,6 +138,11 @@ fn render_card(s: &McpServer) -> Markup {
         McpTransport::Http { url, .. } => ("http", url.clone()),
         McpTransport::Sse  { url, .. } => ("sse",  url.clone()),
     };
+    // Reverse-lookup: which registered projects already have this server attached.
+    let deployed_on: Vec<String> = mcp_deploy::projects_with(&s.name).unwrap_or_default();
+    let deployed_set: std::collections::HashSet<&str> =
+        deployed_on.iter().map(|s| s.as_str()).collect();
+    let action_url = format!("/mcp/{}/deploy-action", s.name);
     html! {
         div class="aiem-card" {
             div style="display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap" {
@@ -149,14 +160,42 @@ fn render_card(s: &McpServer) -> Markup {
                         }
                     }
                 }
-                div style="display:flex;gap:6px;align-items:center" {
-                    form hx-post=(format!("/mcp/{}/toggle", s.name)) hx-swap="none" {
+                // ── All actions in ONE row (matches skills card layout) ──
+                div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap" {
+                    // Scope picker + state-aware Deploy/Sync/Undeploy button.
+                    form hx-post=(action_url) hx-swap="none"
+                         style="display:inline-flex;gap:6px;align-items:center;margin:0" {
+                        select name="scope" class="field"
+                                style="width:auto;min-width:140px"
+                                onchange="updateMcpDeployBtn(this)" {
+                            // Global → "Sync"
+                            option value="global" data-state="sync" { "Global" }
+                            // Projects → "Undeploy" if already attached, else "Deploy"
+                            @for (path, name) in projects {
+                                @if deployed_set.contains(name.as_str()) {
+                                    option value=(path) data-state="undeploy" { (format!("{name}  \u{2713}")) }
+                                } @else {
+                                    option value=(path) data-state="deploy" { (name) }
+                                }
+                            }
+                        }
+                        button type="submit" class="btn-primary aiem-mcp-deploy-btn" { "Sync" }
+                    }
+                    form hx-post=(format!("/mcp/{}/toggle", s.name)) hx-swap="none" style="margin:0" {
                         (btn_secondary(if s.disabled { "Enable" } else { "Disable" }))
                     }
                     form hx-post=(format!("/mcp/{}/remove", s.name)) hx-swap="none"
-                         hx-confirm="Remove this MCP server from the registry?" {
+                         hx-confirm="Remove this MCP server from the registry?" style="margin:0" {
                         (btn_danger("Remove"))
                     }
+                }
+            }
+
+            // Chips row: which projects currently have this server attached.
+            @if !deployed_on.is_empty() {
+                div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap" {
+                    span class="meta" { "Deployed:" }
+                    @for n in &deployed_on { (tag(n, TagKind::Neutral)) }
                 }
             }
         }
@@ -264,6 +303,56 @@ async fn sync_all(State(st): State<AppState>) -> Response {
 }
 
 fn http_ok() -> Response { (axum::http::StatusCode::OK, "ok").into_response() }
+
+#[derive(Deserialize)]
+struct ScopeForm { scope: String }
+
+/// State-aware single-button deploy action (mirrors the skills card UX).
+///
+/// - `scope == "global"` → full sync to user-scope IDE configs.
+/// - `scope == <project path>`:
+///     * if the server is already in the project's `mcp_servers` → undeploy
+///     * otherwise → deploy
+async fn deploy_action(
+    State(st): State<AppState>,
+    Path(name): Path<String>,
+    Form(f): Form<ScopeForm>,
+) -> Response {
+    let tx = st.events.clone();
+    let _g = st.write_lock.lock().await;
+    if f.scope == "global" {
+        let reg = match McpRegistry::load() { Ok(r) => r, Err(e) => { toast_error(&tx, format!("{e}")); return http_ok(); } };
+        let plan = mcp::sync::plan(&reg, &[]);
+        match mcp::sync::execute(&reg, &plan, None) {
+            Ok(_) => { toast_info(&tx, format!("synced {name} → global")); invalidate(&tx, ResourceKind::Mcp); }
+            Err(e) => toast_error(&tx, format!("sync: {e}")),
+        }
+        return http_ok();
+    }
+
+    let project = std::path::PathBuf::from(&f.scope);
+    let already_attached = ProjectStore::load()
+        .ok()
+        .and_then(|s| s.get(&f.scope).cloned())
+        .map(|p| p.mcp_servers.iter().any(|n| n == &name))
+        .unwrap_or(false);
+
+    if already_attached {
+        match mcp_deploy::undeploy_from_project(&name, &project) {
+            Ok(_) => { toast_info(&tx, format!("undeployed {name} from project")); invalidate(&tx, ResourceKind::Mcp); }
+            Err(e) => toast_error(&tx, format!("{e}")),
+        }
+    } else {
+        match mcp_deploy::deploy_to_project(&name, &project) {
+            Ok(touched) => {
+                toast_info(&tx, format!("deployed {name} → project ({} file(s))", touched.len()));
+                invalidate(&tx, ResourceKind::Mcp);
+            }
+            Err(e) => toast_error(&tx, format!("{e}")),
+        }
+    }
+    http_ok()
+}
 
 // ─── JSON parsing (mirrors GUI) ──────────────────────────────────────────
 

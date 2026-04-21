@@ -46,6 +46,8 @@ pub struct State {
     pub link_github_input: String,
     /// group key pending batch-delete confirmation
     pub confirm_delete_group: Option<String>,
+    /// skill id -> cached list of project names that reference this skill (chips row)
+    pub deployed_projects_cache: std::collections::HashMap<String, Vec<String>>,
 }
 
 pub fn show(ui: &mut egui::Ui, app: &mut App) {
@@ -198,13 +200,18 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                                 if ui.add(btn).clicked() {
                                     let mut ok = 0;
                                     for s in skills.iter() {
-                                        match tasks::deploy_skill(&s.id, &ide_id, project_path.as_deref()) {
+                                        let res = match project_path.as_deref() {
+                                            Some(p) => tasks::skill_deploy_to_project(&s.id, &ide_id, p).map(|_| ()),
+                                            None => tasks::deploy_skill(&s.id, &ide_id, None).map(|_| ()),
+                                        };
+                                        match res {
                                             Ok(_) => ok += 1,
                                             Err(e) => app.toast_error(format!("{}: {e}", s.name)),
                                         }
                                     }
                                     if ok > 0 {
                                         app.toast_info(format!("deployed {ok} skills to {ide_id}"));
+                                        app.skills_state.deployed_projects_cache.clear();
                                         app.reload_skills();
                                     }
                                 }
@@ -219,14 +226,16 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
                                     let mut ok = 0;
                                     for s in skills.iter() {
                                         if s.deployments.contains_key(ide_id.as_str()) {
-                                            match tasks::undeploy_skill(&s.id, &ide_id, project_path.as_deref()) {
-                                                Ok(_) => ok += 1,
-                                                Err(_) => {}
-                                            }
+                                            let res = match project_path.as_deref() {
+                                                Some(p) => tasks::skill_undeploy_from_project(&s.id, &ide_id, p),
+                                                None => tasks::undeploy_skill(&s.id, &ide_id, None),
+                                            };
+                                            if res.is_ok() { ok += 1; }
                                         }
                                     }
                                     if ok > 0 {
                                         app.toast_info(format!("undeployed {ok} skills from {ide_id}"));
+                                        app.skills_state.deployed_projects_cache.clear();
                                         app.reload_skills();
                                     }
                                 }
@@ -424,6 +433,19 @@ fn render_skill_card(ui: &mut egui::Ui, app: &mut App, skill: &aiem_core::skills
                         }
                     });
                 }
+                // Project-membership chips (left-aligned, no label).
+                let sk_id_chips = skill.id.clone();
+                let proj_names = app.skills_state.deployed_projects_cache
+                    .entry(sk_id_chips.clone())
+                    .or_insert_with(|| tasks::skill_projects_with(&sk_id_chips).unwrap_or_default())
+                    .clone();
+                if !proj_names.is_empty() {
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for n in &proj_names { theme::tag(ui, n, theme::MUTED()); }
+                    });
+                }
             });
 
             // Right action buttons (bottom-aligned with left content)
@@ -458,12 +480,38 @@ fn render_skill_card(ui: &mut egui::Ui, app: &mut App, skill: &aiem_core::skills
                 }
 
                 // Deploy/Undeploy + ComboBox
+                // ── Deploy/Undeploy toggle + IDE picker + Project picker ──
+                // Visual order (left → right): [Project ▾] [IDE ▾] [Deploy/Undeploy]
+                // (code order is reverse because this is a RTL layout).
                 let ide_selected = app.skills_state.deploy_ide
                     .entry(skill.id.clone())
                     .or_insert_with(|| "claude-code".to_string())
                     .clone();
-                let is_deployed = skill.deployments.contains_key(ide_selected.as_str());
-                let (label, danger) = if is_deployed { ("Undeploy", true) } else { ("Deploy", false) };
+
+                // Project scope: "global" | <project-path>
+                let scope_key = format!("card-scope-{}", skill.id);
+                let scope_val = app.skills_state.deploy_scope
+                    .get(&scope_key).cloned().unwrap_or_else(|| "global".into());
+                let is_global = scope_val == "global";
+
+                // Load projects once per card draw (list + "does this project already have this skill?").
+                let projects: Vec<(String, String, bool)> = aiem_core::projects::ProjectStore::load()
+                    .map(|store| store.list()
+                        .map(|p| (p.path.clone(), p.name.clone(),
+                                  p.skills.iter().any(|s| s == &skill.id)))
+                        .collect())
+                    .unwrap_or_default();
+
+                let is_deployed_here = if is_global {
+                    // Global: per-IDE deployment list contains "~"
+                    skill.deployments.get(ide_selected.as_str())
+                        .map(|roots| roots.iter().any(|r| r == "~"))
+                        .unwrap_or(false)
+                } else {
+                    // Project: project.skills contains this id
+                    projects.iter().any(|(p, _, has)| *has && p == &scope_val)
+                };
+                let (label, danger) = if is_deployed_here { ("Undeploy", true) } else { ("Deploy", false) };
                 let resp = if danger {
                     let btn = egui::Button::new(RichText::new(label).color(theme::DANGER()))
                         .rounding(egui::Rounding::same(6.0))
@@ -479,18 +527,37 @@ fn render_skill_card(ui: &mut egui::Ui, app: &mut App, skill: &aiem_core::skills
                 };
                 if resp.clicked() {
                     let id = skill.id.clone();
-                    if is_deployed {
-                        match tasks::undeploy_skill(&id, &ide_selected, None) {
-                            Ok(_) => { app.toast_info(format!("undeployed {id} from {ide_selected}")); app.reload_skills(); }
-                            Err(e) => app.toast_error(format!("{e}")),
+                    // Invalidate chips cache — membership may change.
+                    app.skills_state.deployed_projects_cache.remove(&id);
+                    if is_global {
+                        if is_deployed_here {
+                            match tasks::undeploy_skill(&id, &ide_selected, None) {
+                                Ok(_) => { app.toast_info(format!("undeployed {id} from {ide_selected}")); app.reload_skills(); }
+                                Err(e) => app.toast_error(format!("{e}")),
+                            }
+                        } else {
+                            match tasks::deploy_skill(&id, &ide_selected, None) {
+                                Ok(p) => { app.toast_info(format!("deployed -> {}", p.display())); app.reload_skills(); }
+                                Err(e) => app.toast_error(format!("{e}")),
+                            }
                         }
                     } else {
-                        match tasks::deploy_skill(&id, &ide_selected, None) {
-                            Ok(p) => { app.toast_info(format!("deployed -> {}", p.display())); app.reload_skills(); }
-                            Err(e) => app.toast_error(format!("{e}")),
+                        let project = std::path::PathBuf::from(&scope_val);
+                        if is_deployed_here {
+                            match tasks::skill_undeploy_from_project(&id, &ide_selected, &project) {
+                                Ok(_) => { app.toast_info(format!("undeployed {id} from project")); app.reload_skills(); }
+                                Err(e) => app.toast_error(format!("{e}")),
+                            }
+                        } else {
+                            match tasks::skill_deploy_to_project(&id, &ide_selected, &project) {
+                                Ok(p) => { app.toast_info(format!("deployed -> {}", p.display())); app.reload_skills(); }
+                                Err(e) => app.toast_error(format!("{e}")),
+                            }
                         }
                     }
                 }
+
+                // IDE ComboBox (appears to the LEFT of the button in RTL).
                 let chosen = app.skills_state.deploy_ide
                     .entry(skill.id.clone())
                     .or_insert_with(|| "claude-code".to_string());
@@ -502,6 +569,33 @@ fn render_skill_card(ui: &mut egui::Ui, app: &mut App, skill: &aiem_core::skills
                             ui.selectable_value(chosen, i.id.to_string(), i.display_name);
                         }
                     });
+
+                // Project scope ComboBox (leftmost in RTL).
+                let mut scope_val = scope_val;
+                let scope_label = if is_global {
+                    "Global".to_string()
+                } else {
+                    projects.iter().find(|(p, _, _)| p == &scope_val)
+                        .map(|(_, n, _)| n.clone())
+                        .unwrap_or_else(|| std::path::Path::new(scope_val.as_str())
+                            .file_name().map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| scope_val.clone()))
+                };
+                egui::ComboBox::from_id_source(format!("proj-{}", skill.id))
+                    .selected_text(&scope_label)
+                    .width(140.0)
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(&mut scope_val, "global".to_string(), "Global");
+                        if projects.is_empty() {
+                            ui.label(RichText::new("(no projects registered)").small().color(theme::MUTED()));
+                        } else {
+                            for (path, name, has) in &projects {
+                                let label = if *has { format!("{name}  \u{2713}") } else { name.clone() };
+                                ui.selectable_value(&mut scope_val, path.clone(), label);
+                            }
+                        }
+                    });
+                app.skills_state.deploy_scope.insert(scope_key, scope_val);
             });
         });
 
@@ -544,6 +638,7 @@ fn render_skill_card(ui: &mut egui::Ui, app: &mut App, skill: &aiem_core::skills
                 }
             });
         }
+
     });
     ui.add_space(10.0);
 }

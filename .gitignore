@@ -15,3 +15,7 @@ Thumbs.db
 *.swo
 .env
 .env.local
+
+# Vendored dependencies and local cargo config (generated locally, not part of source)
+vendor/
+.cargo/

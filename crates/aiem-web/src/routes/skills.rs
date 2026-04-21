@@ -242,6 +242,8 @@ fn scope_selectors(id_prefix: &str, projects: &[(String, String)]) -> Markup {
 fn render_skill_row(s: &Skill, projects: &[(String, String)]) -> Markup {
     let is_local = matches!(&s.source, SkillSource::Local { .. });
     let short = short_id(&s.id);
+    let in_projects: Vec<String> =
+        aiem_core::skills::registry::projects_with(&s.id).unwrap_or_default();
 
     html! {
         div class="skill-card" style="border:1px solid var(--stroke);border-radius:8px;padding:12px;margin-bottom:8px;background:var(--surface);" {
@@ -310,6 +312,14 @@ fn render_skill_row(s: &Skill, projects: &[(String, String)]) -> Markup {
                          hx-confirm="Remove this skill and delete local files?" {
                         (btn_danger("Remove"))
                     }
+                }
+            }
+
+            // Chips row: projects that currently reference this skill.
+            @if !in_projects.is_empty() {
+                div style="margin-top:8px;display:flex;gap:6px;align-items:center;flex-wrap:wrap" {
+                    span class="meta" { "In projects:" }
+                    @for n in &in_projects { (tag(n, TagKind::Neutral)) }
                 }
             }
         }

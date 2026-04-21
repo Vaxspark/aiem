@@ -16,6 +16,10 @@ pub struct State {
     /// JSON/code block input for adding servers
     pub json_input: String,
     pub filter: String,
+    /// server name -> chosen scope: "global" or a project path
+    pub deploy_scope: std::collections::HashMap<String, String>,
+    /// server name -> cached list of project names it's deployed to (chips row)
+    pub deployed_cache: std::collections::HashMap<String, Vec<String>>,
 }
 
 pub fn show(ui: &mut egui::Ui, app: &mut App) {
@@ -243,6 +247,18 @@ fn render_server_card(ui: &mut egui::Ui, app: &mut App, s: &McpServer) {
                         for t in &s.targets { theme::tag(ui, t, theme::SUCCESS()); }
                     });
                 }
+                // Project-membership chips (left-aligned, no label).
+                let deployed_names_left = app.mcp_state.deployed_cache
+                    .entry(s.name.clone())
+                    .or_insert_with(|| tasks::mcp_projects_with(&s.name).unwrap_or_default())
+                    .clone();
+                if !deployed_names_left.is_empty() {
+                    ui.add_space(4.0);
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing.x = 4.0;
+                        for n in &deployed_names_left { theme::tag(ui, n, theme::MUTED()); }
+                    });
+                }
             });
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
@@ -265,10 +281,130 @@ fn render_server_card(ui: &mut egui::Ui, app: &mut App, s: &McpServer) {
                         Err(e) => app.toast_error(format!("{e}")),
                     }
                 }
+
+                // Scope-aware deploy toggle (mirrors skills card's Deploy/Undeploy button).
+                render_deploy_toggle(ui, app, s);
             });
         });
+
     });
     ui.add_space(10.0);
+}
+
+/// Inline Deploy / Undeploy / Sync toggle + Scope picker. Placed inside the
+/// card's right-to-left action row, so the visual order (left → right) is:
+///   [Scope ComboBox]  [Deploy/Sync/Undeploy]  [Disable]  [Remove]
+///
+/// Behaviour mirrors the skills card:
+/// - Global scope → single accent "Sync" button (runs full-registry sync to
+///   user-scope IDE configs; no undeploy in this mode).
+/// - Project scope → single button whose label toggles between "Deploy"
+///   (accent) and "Undeploy" (danger) based on whether the server name is
+///   currently present in that project's `mcp_servers`.
+fn render_deploy_toggle(ui: &mut egui::Ui, app: &mut App, s: &McpServer) {
+    use aiem_core::projects::ProjectStore;
+
+    // Load projects once per card draw.
+    let store = ProjectStore::load().ok();
+    let projects: Vec<(String, String, bool /*contains this server*/ )> = store
+        .as_ref()
+        .map(|st| {
+            st.list()
+                .map(|p| (p.path.clone(), p.name.clone(),
+                          p.mcp_servers.iter().any(|n| n == &s.name)))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let scope_key = s.name.clone();
+    let mut scope_val = app.mcp_state.deploy_scope
+        .get(&scope_key).cloned().unwrap_or_else(|| "global".into());
+
+    let is_global = scope_val == "global";
+    let is_deployed_here = !is_global
+        && projects.iter().any(|(p, _, has)| *has && p == &scope_val);
+
+    // --- Button (drawn first so it sits to the RIGHT of the ComboBox in
+    //     the right-to-left layout; i.e. visually between Disable and Scope) ---
+    let (label, danger) = if is_global {
+        ("Sync", false)
+    } else if is_deployed_here {
+        ("Undeploy", true)
+    } else {
+        ("Deploy", false)
+    };
+
+    let resp = if danger {
+        let btn = egui::Button::new(RichText::new(label).color(theme::DANGER()))
+            .rounding(egui::Rounding::same(6.0))
+            .min_size(egui::vec2(0.0, 26.0));
+        ui.add(btn)
+    } else {
+        let pal = theme::p();
+        let btn = egui::Button::new(RichText::new(label).color(pal.accent_fg))
+            .fill(pal.accent)
+            .rounding(egui::Rounding::same(6.0))
+            .min_size(egui::vec2(0.0, 26.0));
+        ui.add(btn)
+    };
+    if resp.clicked() {
+        let name = s.name.clone();
+        // Deploy/undeploy change membership → drop cached chip list for this server.
+        app.mcp_state.deployed_cache.remove(&name);
+        if is_global {
+            match tasks::mcp_sync_all(None) {
+                Ok(_) => { app.toast_info(format!("synced {name} → global IDE configs")); app.reload_mcp(); }
+                Err(e) => app.toast_error(format!("{e}")),
+            }
+        } else {
+            let path = std::path::PathBuf::from(&scope_val);
+            if is_deployed_here {
+                match tasks::mcp_undeploy_from_project(&name, &path) {
+                    Ok(_) => { app.toast_info(format!("undeployed {name}")); app.reload_mcp(); }
+                    Err(e) => app.toast_error(format!("{e}")),
+                }
+            } else {
+                if s.disabled {
+                    app.toast_info(format!("{name} is disabled — attached but skipped by sync"));
+                }
+                match tasks::mcp_deploy_to_project(&name, &path) {
+                    Ok(touched) => { app.toast_info(format!("deployed {name} ({} file(s))", touched.len())); app.reload_mcp(); }
+                    Err(e) => app.toast_error(format!("{e}")),
+                }
+            }
+        }
+    }
+
+    // --- Scope ComboBox (drawn after the button → renders to its LEFT) ---
+    let scope_label = if is_global {
+        "Global".to_string()
+    } else {
+        projects
+            .iter()
+            .find(|(p, _, _)| p == &scope_val)
+            .map(|(_, n, _)| n.clone())
+            .unwrap_or_else(|| {
+                std::path::Path::new(scope_val.as_str())
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| scope_val.clone())
+            })
+    };
+    egui::ComboBox::from_id_source(format!("mcp-scope-{}", s.name))
+        .selected_text(&scope_label)
+        .width(140.0)
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut scope_val, "global".to_string(), "Global");
+            if projects.is_empty() {
+                ui.label(RichText::new("(no projects registered)").small().color(theme::MUTED()));
+            } else {
+                for (path, name, has) in &projects {
+                    let label = if *has { format!("{name}  \u{2713}") } else { name.clone() };
+                    ui.selectable_value(&mut scope_val, path.clone(), label);
+                }
+            }
+        });
+    app.mcp_state.deploy_scope.insert(scope_key, scope_val);
 }
 
 fn config_paths_summary(ui: &mut egui::Ui) {

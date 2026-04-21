@@ -34,6 +34,9 @@ impl Default for ServeConfig {
 }
 
 /// Start the Web UI server and block until Ctrl-C.
+///
+/// If the configured port is already in use, automatically falls back to
+/// the next available port (tries up to 10 ports before giving up).
 pub async fn serve(cfg: ServeConfig) -> anyhow::Result<()> {
     aiem_core::paths::ensure_layout()?;
 
@@ -54,21 +57,56 @@ pub async fn serve(cfg: ServeConfig) -> anyhow::Result<()> {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    tracing::info!("aiem-web listening on http://{}", cfg.addr);
-    eprintln!("\n  aiem-web is running:  http://{}\n", cfg.addr);
-    eprintln!("  (on a remote box, use:  ssh -L {}:localhost:{} user@host)\n",
-        cfg.addr.port(), cfg.addr.port());
+    // Try the requested port first; if it is in use, probe the next few ports.
+    let listener = bind_with_fallback(cfg.addr, 10).await?;
+    let actual_addr = listener.local_addr()?;
+
+    tracing::info!("aiem-web listening on http://{}", actual_addr);
+    eprintln!("\n  aiem-web is running:  http://{}\n", actual_addr);
+    eprintln!("  (on a remote box, use:  ssh -L {port}:localhost:{port} user@host)\n",
+        port = actual_addr.port());
+    if actual_addr.port() != cfg.addr.port() {
+        eprintln!(
+            "  Note: port {} was in use — using {} instead.\n",
+            cfg.addr.port(), actual_addr.port()
+        );
+    }
 
     if cfg.open_browser {
-        let url = format!("http://{}", cfg.addr);
+        let url = format!("http://{}", actual_addr);
         let _ = webbrowser_open(&url);
     }
 
-    let listener = tokio::net::TcpListener::bind(cfg.addr).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())
+}
+
+/// Try to bind `addr`; if the port is taken, increment port and retry up to
+/// `max_tries` times.  Returns the first successful listener.
+async fn bind_with_fallback(
+    addr: std::net::SocketAddr,
+    max_tries: u16,
+) -> anyhow::Result<tokio::net::TcpListener> {
+    let mut last_err = None;
+    for offset in 0..max_tries {
+        let port = addr.port().saturating_add(offset);
+        let candidate = std::net::SocketAddr::new(addr.ip(), port);
+        match tokio::net::TcpListener::bind(candidate).await {
+            Ok(l) => return Ok(l),
+            Err(e) => {
+                tracing::debug!("port {} in use: {}", port, e);
+                last_err = Some(e);
+            }
+        }
+    }
+    Err(anyhow::anyhow!(
+        "Could not bind to any port in range {}–{}: {}",
+        addr.port(),
+        addr.port().saturating_add(max_tries - 1),
+        last_err.unwrap()
+    ))
 }
 
 async fn shutdown_signal() {
