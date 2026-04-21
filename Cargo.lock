@@ -81,7 +81,7 @@ dependencies = [
 
 [[package]]
 name = "aiem-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aiem-core",
  "aiem-web",
@@ -99,7 +99,7 @@ dependencies = [
 
 [[package]]
 name = "aiem-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "aiem-gui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aiem-core",
  "anyhow",
@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "aiem-web"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "aiem-core",
  "anyhow",

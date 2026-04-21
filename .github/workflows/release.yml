@@ -13,8 +13,23 @@ on:
 permissions:
   contents: write
 
+env:
+  RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.tag }}
+
 jobs:
+  ensure-release:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Create or update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
+          generate_release_notes: true
+
   build:
+    needs: ensure-release
     name: ${{ matrix.name }}
     runs-on: ${{ matrix.os }}
     strategy:
@@ -100,7 +115,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME:-${{ github.event.inputs.tag }}}"
+          TAG="${RELEASE_TAG}"
           PKG="aiem-${TAG}-${{ matrix.name }}"
           mkdir -p "dist/${PKG}"
           for b in ${{ matrix.bins }}; do
@@ -115,7 +130,7 @@ jobs:
         if: matrix.archive == 'zip'
         shell: pwsh
         run: |
-          $tag = if ($env:GITHUB_REF_NAME) { $env:GITHUB_REF_NAME } else { '${{ github.event.inputs.tag }}' }
+          $tag = $env:RELEASE_TAG
           $pkg = "aiem-$tag-${{ matrix.name }}"
           New-Item -ItemType Directory -Force -Path "dist/$pkg" | Out-Null
           foreach ($b in @('aiem.exe','aiem-gui.exe')) {
@@ -131,18 +146,10 @@ jobs:
           name: ${{ matrix.name }}
           path: dist/aiem-*
 
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/')
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-
-      - name: Publish GitHub Release
+      - name: Upload assets to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           files: dist/aiem-*
-          generate_release_notes: true
+          overwrite_files: true
