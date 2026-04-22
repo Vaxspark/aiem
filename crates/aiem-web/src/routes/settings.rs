@@ -199,6 +199,15 @@ fn backup_card(cfg: &BackupConfig, last_backup: &str) -> Markup {
                 input name="token" type="password"
                     placeholder="ghp_... (leave blank to keep existing)"
                     class="field w-full mb-2";
+                p class="meta text-xs mb-1" {
+                    "Proxy (optional, for GitHub access, e.g. "
+                    code class="mono" { "socks5h://127.0.0.1:1080" }
+                    ")"
+                }
+                input name="proxy" type="text"
+                    value=(cfg.http_proxy.as_deref().unwrap_or(""))
+                    placeholder="socks5h://127.0.0.1:1080"
+                    class="field w-full mb-2";
                 div class="flex gap-2" {
                     (btn_primary("Save config"))
                 }
@@ -230,6 +239,8 @@ struct SaveConfigForm {
     repo:  String,
     #[serde(default)]
     token: String,
+    #[serde(default)]
+    proxy: String,
 }
 
 /// Persist the GitHub backup repo URL and (optionally) the PAT.
@@ -246,6 +257,7 @@ async fn backup_save_config(State(st): State<AppState>, Form(f): Form<SaveConfig
     match BackupConfig::load() {
         Ok(mut cfg) => {
             cfg.github_repo = if repo.is_empty() { None } else { Some(repo.clone()) };
+            cfg.http_proxy  = if f.proxy.trim().is_empty() { None } else { Some(f.proxy.trim().to_string()) };
             if let Err(e) = cfg.save() {
                 toast_error(&tx, format!("save config: {e}"));
                 return ok();
