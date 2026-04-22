@@ -255,23 +255,25 @@ async fn backup_save_config(State(st): State<AppState>, Form(f): Form<SaveConfig
     }
 
     if !token.is_empty() {
-        // Primary: OS keyring.  On Linux systemd user services this may not
-        // persist across restarts (session keyring), so also write a
-        // filesystem fallback at `~/.aiem/.backup-token` (0600).
-        match Vault::load() {
-            Ok(mut vault) => {
-                if let Err(e) = vault.set(GH_TOKEN_NAME, &token, Some("GitHub Personal Access Token".into())) {
-                    toast_error(&tx, format!("keyring: {e}"));
-                    return ok();
-                }
-                std::env::set_var("GITHUB_TOKEN", &token);
-            }
-            Err(e) => { toast_error(&tx, format!("vault: {e}")); return ok(); }
-        }
+        // Write the filesystem fallback first so persistence is guaranteed
+        // even when the OS keyring is unavailable (e.g. Linux systemd user
+        // services whose session keyring does not survive restart).
         if let Err(e) = aiem_core::backup::save_backup_token_file(&token) {
             toast_error(&tx, format!("token file: {e}"));
             return ok();
         }
+        // Best-effort keyring storage: failures here don't block persistence.
+        match Vault::load() {
+            Ok(mut vault) => {
+                if let Err(e) = vault.set(GH_TOKEN_NAME, &token, Some("GitHub Personal Access Token".into())) {
+                    tracing::warn!("keyring set failed (using file fallback): {e}");
+                }
+            }
+            Err(e) => {
+                tracing::warn!("vault load failed (using file fallback): {e}");
+            }
+        }
+        std::env::set_var("GITHUB_TOKEN", &token);
         toast_info(&tx, "Backup config and token saved");
     } else {
         toast_info(&tx, "Backup config saved");
