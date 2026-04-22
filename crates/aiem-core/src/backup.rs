@@ -54,8 +54,10 @@ pub struct BackupConfig {
     /// HTTPS GitHub repo URL, e.g. `https://github.com/user/my-aiem-backup`.
     pub github_repo: Option<String>,
     /// How often the GUI auto-runs a snapshot.
+    #[serde(default)]
     pub auto_interval: AutoInterval,
     /// Unix timestamp (seconds) of the last successful backup of any kind.
+    #[serde(default)]
     pub last_backup_ts: Option<u64>,
     /// Optional HTTP/HTTPS proxy for git network operations,
     /// e.g. `http://127.0.0.1:7890` or `socks5://127.0.0.1:1080`.
@@ -70,7 +72,10 @@ impl BackupConfig {
             return Ok(Self::default());
         }
         let s = std::fs::read_to_string(&p)?;
-        Ok(serde_json::from_str(&s)?)
+        // If the stored JSON is missing fields (e.g. old format or manually
+        // reset to `{}`), fall back to defaults rather than propagating a
+        // parse error that would silently block all backup operations.
+        Ok(serde_json::from_str(&s).unwrap_or_default())
     }
 
     pub fn save(&self) -> Result<()> {
