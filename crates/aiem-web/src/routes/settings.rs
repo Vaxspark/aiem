@@ -350,14 +350,23 @@ async fn backup_pull(State(st): State<AppState>) -> Response {
     ok()
 }
 
-/// Load the saved repo URL + effective token (keyring / env) for push/pull.
+/// Load the saved repo URL + effective token for push/pull.
+/// Token resolution order: `GITHUB_TOKEN` env var → OS keyring slot
+/// (`github_token`).  Reading the keyring here means the token survives
+/// process restarts (e.g. when the systemd service is restarted after
+/// the user saved it earlier).
 fn load_backup_target() -> std::result::Result<(String, Option<String>), String> {
     let cfg  = BackupConfig::load().map_err(|e| format!("load config: {e}"))?;
     let repo = cfg.github_repo.unwrap_or_default();
     if repo.trim().is_empty() {
         return Err("No backup repo URL configured. Fill the form and click 'Save config' first.".to_string());
     }
-    let token = std::env::var("GITHUB_TOKEN").ok().filter(|s| !s.is_empty());
+    let token = std::env::var("GITHUB_TOKEN").ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| {
+            Vault::load().ok().and_then(|v| v.get(GH_TOKEN_NAME).ok())
+        })
+        .filter(|s| !s.is_empty());
     Ok((repo, token))
 }
 
