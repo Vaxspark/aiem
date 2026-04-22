@@ -19,3 +19,5 @@ Thumbs.db
 # Vendored dependencies and local cargo config (generated locally, not part of source)
 vendor/
 .cargo/
+
+dist/

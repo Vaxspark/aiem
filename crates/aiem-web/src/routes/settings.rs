@@ -10,7 +10,7 @@ use aiem_core::secrets::Vault;
 
 use crate::layout::{btn_danger, btn_primary, card, page, page_header, tag, TagKind};
 use crate::state::AppState;
-use crate::tasks::{toast_error, toast_info};
+use crate::tasks::{task_finished, task_started, toast_error, toast_info};
 
 const GH_TOKEN_NAME: &str = "github_token";
 
@@ -19,6 +19,7 @@ pub fn router() -> Router<AppState> {
         .route("/settings", get(index))
         .route("/settings/github-token", post(save_token))
         .route("/settings/github-token/clear", post(clear_token))
+        .route("/settings/backup/save-config", post(backup_save_config))
         .route("/settings/backup/snapshot", post(backup_snapshot))
         .route("/settings/backup/export", post(backup_export))
         .route("/settings/backup/import", post(backup_import))
@@ -118,6 +119,7 @@ fn ok() -> Response { (axum::http::StatusCode::OK, "ok").into_response() }
 
 fn backup_card(cfg: &BackupConfig, last_backup: &str) -> Markup {
     let repo_val = cfg.github_repo.as_deref().unwrap_or("");
+    let has_token = std::env::var("GITHUB_TOKEN").map(|s| !s.is_empty()).unwrap_or(false);
     card(html!{
         div class="flex items-center justify-between mb-3" {
             div class="text-sm font-semibold" { "Backup & Restore" }
@@ -181,66 +183,102 @@ fn backup_card(cfg: &BackupConfig, last_backup: &str) -> Markup {
                 "Commits the three config files to a private GitHub repo. "
                 "Uses " code class="mono" { "~/.aiem/backup-git/" } " as git working tree. Requires " code class="mono" { "git" } " in PATH."
             }
-            p class="meta text-xs mb-1" { "Repo URL (HTTPS)" }
-            div class="mb-2" {
-                input id="backup-repo" name="repo" type="text"
+
+            // Save repo + token (persistent)
+            form hx-post="/settings/backup/save-config" hx-swap="none" class="mb-3" {
+                p class="meta text-xs mb-1" { "Repo URL (HTTPS)" }
+                input name="repo" type="text"
                     value=(repo_val)
                     placeholder="https://github.com/you/my-aiem-backup"
-                    class="field w-full";
+                    class="field w-full mb-2";
+                p class="meta text-xs mb-1" {
+                    "GitHub Token (saved to OS keyring as " code class="mono" { "github_token" } ")"
+                    @if has_token { " " (tag("● saved", TagKind::Success)) }
+                }
+                input name="token" type="password"
+                    placeholder="ghp_... (leave blank to keep existing)"
+                    class="field w-full mb-2";
+                div class="flex gap-2" {
+                    (btn_primary("Save config"))
+                }
             }
-            p class="meta text-xs mb-1" { "Token override (leave empty to use saved GITHUB_TOKEN)" }
-            div class="mb-3" {
-                input id="backup-token" name="token" type="password"
-                    placeholder="ghp_... (optional)"
-                    class="field w-full";
-            }
+
+            // Push / Pull — use saved config, no fields needed
             div class="flex gap-2" {
-                // Push button submits a hidden form using JS to collect the shared fields
-                form id="backup-push-form"
-                    hx-post="/settings/backup/push"
-                    hx-swap="none"
-                    class="flex gap-2" {
-                    input type="hidden" name="_method" value="push";
-                    input id="bpf-repo"  type="hidden" name="repo"  value=(repo_val);
-                    input id="bpf-token" type="hidden" name="token" value="";
+                form hx-post="/settings/backup/push" hx-swap="none" class="flex gap-2" {
                     (btn_primary("Push to GitHub"))
                 }
-                form id="backup-pull-form"
-                    hx-post="/settings/backup/pull"
+                form hx-post="/settings/backup/pull"
                     hx-swap="none"
                     hx-confirm="Restore config from GitHub? This overwrites current data."
                     class="flex gap-2" {
-                    input type="hidden" name="_method" value="pull";
-                    input id="bplf-repo"  type="hidden" name="repo"  value=(repo_val);
-                    input id="bplf-token" type="hidden" name="token" value="";
                     (btn_danger("Pull from GitHub"))
                 }
             }
-            // Sync shared field values before submit
-            script { r#"
-(function(){
-  function syncBackupForms(){
-    var repo  = document.getElementById('backup-repo')?.value  || '';
-    var token = document.getElementById('backup-token')?.value || '';
-    ['bpf-repo','bplf-repo'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=repo; });
-    ['bpf-token','bplf-token'].forEach(function(id){ var el=document.getElementById(id); if(el) el.value=token; });
-  }
-  document.getElementById('backup-push-form')?.addEventListener('htmx:beforeRequest', syncBackupForms);
-  document.getElementById('backup-pull-form')?.addEventListener('htmx:beforeRequest', syncBackupForms);
-})();
-            "# }
+            p class="meta text-xs mt-2" {
+                "Push/Pull use the saved repo URL and token. Click " b { "Save config" } " first to persist them."
+            }
         }
     })
 }
 
 // ─── Backup handlers ─────────────────────────────────────────────────────────
 
+#[derive(Deserialize)]
+struct SaveConfigForm {
+    repo:  String,
+    #[serde(default)]
+    token: String,
+}
+
+/// Persist the GitHub backup repo URL and (optionally) the PAT.
+/// Token is saved to the OS keyring under `github_token` (same slot used by
+/// the top-level GitHub Token form). Empty token leaves the existing one
+/// untouched so the user can update the URL without re-typing the secret.
+async fn backup_save_config(State(st): State<AppState>, Form(f): Form<SaveConfigForm>) -> Response {
+    let tx = st.events.clone();
+    let _g = st.write_lock.lock().await;
+
+    let repo  = f.repo.trim().to_string();
+    let token = f.token.trim().to_string();
+
+    match BackupConfig::load() {
+        Ok(mut cfg) => {
+            cfg.github_repo = if repo.is_empty() { None } else { Some(repo.clone()) };
+            if let Err(e) = cfg.save() {
+                toast_error(&tx, format!("save config: {e}"));
+                return ok();
+            }
+        }
+        Err(e) => { toast_error(&tx, format!("load config: {e}")); return ok(); }
+    }
+
+    if !token.is_empty() {
+        match Vault::load() {
+            Ok(mut vault) => {
+                if let Err(e) = vault.set(GH_TOKEN_NAME, &token, Some("GitHub Personal Access Token".into())) {
+                    toast_error(&tx, format!("keyring: {e}"));
+                    return ok();
+                }
+                std::env::set_var("GITHUB_TOKEN", &token);
+            }
+            Err(e) => { toast_error(&tx, format!("vault: {e}")); return ok(); }
+        }
+        toast_info(&tx, "Backup config and token saved");
+    } else {
+        toast_info(&tx, "Backup config saved");
+    }
+    ok()
+}
+
 async fn backup_snapshot(State(st): State<AppState>) -> Response {
     let tx = st.events.clone();
+    let id = st.next_task_id().await;
     tokio::task::spawn_blocking(move || {
+        task_started(&tx, id, "Taking local snapshot");
         match aiem_core::backup::snapshot_local() {
-            Ok(p)  => toast_info(&tx, format!("Snapshot saved: {}", p.display())),
-            Err(e) => toast_error(&tx, format!("Snapshot failed: {e}")),
+            Ok(p)  => task_finished(&tx, id, true,  format!("Snapshot saved: {}", p.display())),
+            Err(e) => task_finished(&tx, id, false, format!("Snapshot failed: {e}")),
         }
     });
     ok()
@@ -250,11 +288,13 @@ async fn backup_snapshot(State(st): State<AppState>) -> Response {
 struct ExportForm { dest: String }
 async fn backup_export(State(st): State<AppState>, Form(f): Form<ExportForm>) -> Response {
     let tx = st.events.clone();
+    let id = st.next_task_id().await;
     tokio::task::spawn_blocking(move || {
         let dest = std::path::PathBuf::from(f.dest.trim());
+        task_started(&tx, id, format!("Exporting to {}", dest.display()));
         match aiem_core::backup::export_to_dir(&dest) {
-            Ok(files) => toast_info(&tx, format!("Exported {} file(s) to {}", files.len(), dest.display())),
-            Err(e)    => toast_error(&tx, format!("Export failed: {e}")),
+            Ok(files) => task_finished(&tx, id, true,  format!("Exported {} file(s) to {}", files.len(), dest.display())),
+            Err(e)    => task_finished(&tx, id, false, format!("Export failed: {e}")),
         }
     });
     ok()
@@ -264,44 +304,61 @@ async fn backup_export(State(st): State<AppState>, Form(f): Form<ExportForm>) ->
 struct ImportForm { src: String }
 async fn backup_import(State(st): State<AppState>, Form(f): Form<ImportForm>) -> Response {
     let tx = st.events.clone();
+    let id = st.next_task_id().await;
     tokio::task::spawn_blocking(move || {
         let src = std::path::PathBuf::from(f.src.trim());
+        task_started(&tx, id, format!("Restoring from {}", src.display()));
         match aiem_core::backup::import_from_dir(&src) {
-            Ok(files) => toast_info(&tx, format!("Restored {} file(s)", files.len())),
-            Err(e)    => toast_error(&tx, format!("Restore failed: {e}")),
+            Ok(files) => task_finished(&tx, id, true,  format!("Restored {} file(s)", files.len())),
+            Err(e)    => task_finished(&tx, id, false, format!("Restore failed: {e}")),
         }
     });
     ok()
 }
 
-#[derive(Deserialize)]
-struct GithubBackupForm {
-    repo:  String,
-    #[serde(default)]
-    token: String,
-}
-async fn backup_push(State(st): State<AppState>, Form(f): Form<GithubBackupForm>) -> Response {
+async fn backup_push(State(st): State<AppState>) -> Response {
     let tx = st.events.clone();
+    let id = st.next_task_id().await;
     tokio::task::spawn_blocking(move || {
-        let tok = if f.token.trim().is_empty() { None } else { Some(f.token.trim().to_owned()) };
-        match aiem_core::backup::push_github(f.repo.trim(), tok.as_deref()) {
-            Ok(())  => toast_info(&tx, format!("Pushed to {}", f.repo.trim())),
-            Err(e)  => toast_error(&tx, format!("Push failed: {e}")),
+        let (repo, token) = match load_backup_target() {
+            Ok(v)  => v,
+            Err(e) => { task_finished(&tx, id, false, e); return; }
+        };
+        task_started(&tx, id, format!("Pushing to {}", repo));
+        match aiem_core::backup::push_github(&repo, token.as_deref()) {
+            Ok(())  => task_finished(&tx, id, true,  format!("Pushed to {}", repo)),
+            Err(e)  => task_finished(&tx, id, false, format!("Push failed: {e}")),
         }
     });
     ok()
 }
 
-async fn backup_pull(State(st): State<AppState>, Form(f): Form<GithubBackupForm>) -> Response {
+async fn backup_pull(State(st): State<AppState>) -> Response {
     let tx = st.events.clone();
+    let id = st.next_task_id().await;
     tokio::task::spawn_blocking(move || {
-        let tok = if f.token.trim().is_empty() { None } else { Some(f.token.trim().to_owned()) };
-        match aiem_core::backup::pull_github(f.repo.trim(), tok.as_deref()) {
-            Ok(())  => toast_info(&tx, format!("Restored from {}", f.repo.trim())),
-            Err(e)  => toast_error(&tx, format!("Pull failed: {e}")),
+        let (repo, token) = match load_backup_target() {
+            Ok(v)  => v,
+            Err(e) => { task_finished(&tx, id, false, e); return; }
+        };
+        task_started(&tx, id, format!("Pulling from {}", repo));
+        match aiem_core::backup::pull_github(&repo, token.as_deref()) {
+            Ok(())  => task_finished(&tx, id, true,  format!("Restored from {}", repo)),
+            Err(e)  => task_finished(&tx, id, false, format!("Pull failed: {e}")),
         }
     });
     ok()
+}
+
+/// Load the saved repo URL + effective token (keyring / env) for push/pull.
+fn load_backup_target() -> std::result::Result<(String, Option<String>), String> {
+    let cfg  = BackupConfig::load().map_err(|e| format!("load config: {e}"))?;
+    let repo = cfg.github_repo.unwrap_or_default();
+    if repo.trim().is_empty() {
+        return Err("No backup repo URL configured. Fill the form and click 'Save config' first.".to_string());
+    }
+    let token = std::env::var("GITHUB_TOKEN").ok().filter(|s| !s.is_empty());
+    Ok((repo, token))
 }
 
 #[derive(Deserialize)]
