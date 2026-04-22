@@ -15,6 +15,15 @@ pub enum McpTransport {
         env: BTreeMap<String, String>,
         #[serde(default)]
         cwd: Option<String>,
+        /// Optional name of a local script directory that this server
+        /// depends on.  When set, the directory lives at
+        /// `~/.aiem/mcp/bundles/<bundle>/` and is synced with the git
+        /// backup.  At deploy time the bundle is copied into the target
+        /// project as `<project>/.aiem-mcp/<bundle>/`, and any occurrence
+        /// of the `{BUNDLE}` placeholder in `command`, `args`, `env` or
+        /// `cwd` is replaced with that absolute path.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        bundle: Option<String>,
     },
     /// Streamable HTTP (modern MCP transport).
     Http {

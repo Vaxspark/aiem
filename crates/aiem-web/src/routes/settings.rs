@@ -1,4 +1,4 @@
-use axum::extract::{Form, State};
+use axum::extract::{Form, Path, State};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::Router;
@@ -8,7 +8,7 @@ use serde::Deserialize;
 use aiem_core::backup::{AutoInterval, BackupConfig};
 use aiem_core::secrets::Vault;
 
-use crate::layout::{btn_danger, btn_primary, card, page, page_header, tag, TagKind};
+use crate::layout::{btn_danger, btn_primary, card, empty_state, page, page_header, tag, TagKind};
 use crate::state::AppState;
 use crate::tasks::{task_finished, task_started, toast_error, toast_info};
 
@@ -26,6 +26,9 @@ pub fn router() -> Router<AppState> {
         .route("/settings/backup/push", post(backup_push))
         .route("/settings/backup/pull", post(backup_pull))
         .route("/settings/backup/interval", post(backup_set_interval))
+        .route("/settings/trash", get(trash_page))
+        .route("/settings/trash/empty", post(trash_empty))
+        .route("/settings/trash/:name/delete", post(trash_delete_entry))
 }
 
 async fn index(State(_st): State<AppState>) -> Markup {
@@ -65,6 +68,13 @@ async fn index(State(_st): State<AppState>) -> Markup {
                 dt class="meta" { "User" }      dd class="mono" { (whoami()) }
                 dt class="meta" { "OS" }        dd class="mono" { (std::env::consts::OS) " / " (std::env::consts::ARCH) }
             }
+        }))
+        (card(html!{
+            div class="text-sm font-semibold mb-2" { "Trash" }
+            p class="meta" style="margin-bottom:8px" {
+                "Scanned / removed content is moved to a local trash folder instead of being hard-deleted."
+            }
+            a href="/settings/trash" class="btn" { "Open trash" }
         }))
         (card(html!{
             div class="text-sm font-semibold mb-2" { "About" }
@@ -410,4 +420,114 @@ async fn backup_set_interval(State(_st): State<AppState>, Form(f): Form<Interval
     }
     // Redirect back to settings to reflect the updated selection.
     axum::response::Redirect::to("/settings").into_response()
+}
+
+// ─── Trash ───────────────────────────────────────────────────────────────────
+
+fn list_trash_entries() -> Vec<(String, std::path::PathBuf)> {
+    let Ok(trash) = aiem_core::paths::trash_dir() else { return vec![] };
+    if !trash.exists() { return vec![] }
+    let mut out: Vec<(String, std::path::PathBuf)> = std::fs::read_dir(&trash)
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().to_string_lossy().to_string();
+            Some((name, e.path()))
+        })
+        .collect();
+    out.sort_by(|a, b| b.0.cmp(&a.0));
+    out
+}
+
+async fn trash_page(State(_st): State<AppState>) -> Markup {
+    let entries = list_trash_entries();
+    let trash_dir = aiem_core::paths::trash_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    let body = html! {
+        (page_header("Trash", "Items removed from aiem's managed content. Delete entries here to reclaim disk space.", html!{}))
+
+        @if entries.is_empty() {
+            (empty_state("Trash is empty", &format!("Location: {trash_dir}")))
+        } @else {
+            div class="row" style="margin-bottom: 12px; gap: 8px;" {
+                form method="post" action="/settings/trash/empty" hx-post="/settings/trash/empty" hx-swap="none" {
+                    (btn_danger("Empty trash"))
+                }
+                span class="muted" style="align-self: center;" {
+                    (format!("{} entries • {}", entries.len(), trash_dir))
+                }
+            }
+            (card(html! {
+                table class="table" style="width: 100%;" {
+                    thead { tr { th { "Name" } th { "Path" } th { "Actions" } } }
+                    tbody {
+                        @for (name, path) in &entries {
+                            tr {
+                                td { code { (name) } }
+                                td class="muted" style="font-size: 12px;" { (path.display().to_string()) }
+                                td {
+                                    form method="post"
+                                         action={"/settings/trash/" (urlencoding::encode(name)) "/delete"}
+                                         hx-post={"/settings/trash/" (urlencoding::encode(name)) "/delete"}
+                                         hx-swap="none" style="display: inline;" {
+                                        (btn_danger("Delete"))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }))
+        }
+    };
+    page("Trash — aiem", "/settings", body)
+}
+
+async fn trash_empty(State(st): State<AppState>) -> Response {
+    let tx = st.events.clone();
+    let Ok(trash) = aiem_core::paths::trash_dir() else {
+        toast_error(&tx, "no trash dir");
+        return axum::response::Redirect::to("/settings/trash").into_response();
+    };
+    let mut removed = 0usize;
+    if trash.exists() {
+        if let Ok(entries) = std::fs::read_dir(&trash) {
+            for e in entries.flatten() {
+                if aiem_core::fs_util::remove_path(&e.path()).is_ok() {
+                    removed += 1;
+                }
+            }
+        }
+    }
+    toast_info(&tx, format!("deleted {removed} trash entries"));
+    axum::response::Redirect::to("/settings/trash").into_response()
+}
+
+async fn trash_delete_entry(
+    State(st): State<AppState>,
+    Path(name): Path<String>,
+) -> Response {
+    let tx = st.events.clone();
+    let Ok(trash) = aiem_core::paths::trash_dir() else {
+        toast_error(&tx, "no trash dir");
+        return axum::response::Redirect::to("/settings/trash").into_response();
+    };
+    // Guard against path traversal.
+    if name.contains('/') || name.contains('\\') || name.contains("..") {
+        toast_error(&tx, "invalid name");
+        return axum::response::Redirect::to("/settings/trash").into_response();
+    }
+    let target = trash.join(&name);
+    if !target.exists() {
+        toast_error(&tx, "not found");
+        return axum::response::Redirect::to("/settings/trash").into_response();
+    }
+    match aiem_core::fs_util::remove_path(&target) {
+        Ok(_) => toast_info(&tx, format!("deleted `{name}`")),
+        Err(e) => toast_error(&tx, format!("{e}")),
+    }
+    axum::response::Redirect::to("/settings/trash").into_response()
 }

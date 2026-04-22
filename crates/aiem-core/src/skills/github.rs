@@ -546,6 +546,7 @@ pub fn detect_mcp_servers(root: &Path) -> Vec<McpServer> {
                         args,
                         env: Default::default(),
                         cwd: Some(format!("mcp-servers/{name}")),
+                        bundle: None,
                     },
                     targets: vec!["codex".into(), "claude-code".into(), "copilot".into()],
                     description: desc,
@@ -604,7 +605,7 @@ fn parse_mcp_json(content: &str) -> Vec<McpServer> {
                 .map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
                 .unwrap_or_default();
             let cwd = cfg.get("cwd").and_then(|v| v.as_str()).map(String::from);
-            McpTransport::Stdio { command: cmd.to_string(), args, env, cwd }
+            McpTransport::Stdio { command: cmd.to_string(), args, env, cwd, bundle: None }
         } else if let Some(url) = cfg.get("url").and_then(|v| v.as_str()) {
             let headers: std::collections::BTreeMap<String, String> = cfg.get("headers")
                 .and_then(|v| v.as_object())

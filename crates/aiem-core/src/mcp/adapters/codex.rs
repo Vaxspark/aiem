@@ -35,7 +35,7 @@ fn load(path: &Path) -> Result<toml::value::Table> {
 
 fn server_to_toml(s: &McpServer) -> Option<Value> {
     match &s.transport {
-        McpTransport::Stdio { command, args, env, cwd } => {
+        McpTransport::Stdio { command, args, env, cwd, bundle: _ } => {
             let mut t = toml::value::Table::new();
             t.insert("command".into(), Value::String(command.clone()));
             if !args.is_empty() {
@@ -123,7 +123,7 @@ pub fn read(project_root: Option<&Path>) -> Result<Vec<McpServer>> {
             let cwd = st.get("cwd").and_then(|v| v.as_str()).map(String::from);
             out.push(McpServer {
                 name: name.clone(),
-                transport: McpTransport::Stdio { command, args, env, cwd },
+                transport: McpTransport::Stdio { command, args, env, cwd, bundle: None },
                 targets: vec!["codex".into()],
                 description: None,
                 tags: vec![],

@@ -241,11 +241,28 @@ fn looks_like_skill(path: &Path) -> bool {
     false
 }
 
-/// Import a discovered skill folder into the aiem registry and optionally
-/// move/copy it into `~/.aiem/skills/`. Returns the imported Skill.
+/// Import a discovered skill folder into the aiem registry.
+///
+/// When `copy_to_aiem == true` aiem takes **full ownership** of the content:
+///
+/// 1. The folder is copied into `~/.aiem/skills/<id>/`.
+/// 2. The original location is moved to the recycle bin at
+///    `~/.aiem/trash/` so it can no longer pollute the IDE's skills
+///    directory (but is still recoverable).
+/// 3. If the source was found inside a real IDE's skills directory we
+///    redeploy it by creating a symlink/junction back at the original
+///    path, so the IDE keeps seeing the skill transparently.
+///
+/// When `copy_to_aiem == false` aiem simply registers a reference to the
+/// existing on-disk folder and leaves the filesystem untouched.
 pub fn import_skill(found: &FoundSkill, copy_to_aiem: bool) -> Result<Skill> {
     let mut reg = SkillRegistry::load().unwrap_or_default();
     let id = format!("local__{}", sanitize_id(&found.dir_name));
+
+    // Track whether we successfully performed the copy + trash step so we
+    // know whether a post-copy re-link back to the original location is
+    // safe to attempt.
+    let mut did_migrate = false;
 
     let dest_path = if copy_to_aiem {
         let dest = paths::skills_dir()?.join(&id);
@@ -253,7 +270,17 @@ pub fn import_skill(found: &FoundSkill, copy_to_aiem: bool) -> Result<Skill> {
             // Resolve the real path first (follow junctions/symlinks).
             let real_src = std::fs::canonicalize(&found.path).unwrap_or_else(|_| found.path.clone());
             match crate::fs_util::copy_dir_safe(&real_src, &dest) {
-                Ok(()) => dest,
+                Ok(()) => {
+                    // Copy succeeded — move the original out of the IDE's
+                    // skills tree into the recycle bin so the IDE no longer
+                    // sees two copies of the same content.  Best-effort:
+                    // if trashing fails (e.g. permission denied) we keep
+                    // going with just the aiem-side copy.
+                    let label = format!("skill-{}", sanitize_id(&found.dir_name));
+                    let _ = crate::fs_util::move_to_trash(&found.path, &label);
+                    did_migrate = true;
+                    dest
+                }
                 Err(_) => {
                     // If copy fails, reference in-place instead.
                     found.path.clone()
@@ -270,7 +297,7 @@ pub fn import_skill(found: &FoundSkill, copy_to_aiem: bool) -> Result<Skill> {
     let mut deployments = BTreeMap::new();
     deployments.insert(found.ide_id.clone(), vec!["~".to_string()]);
 
-    let skill = Skill {
+    let mut skill = Skill {
         id: id.clone(),
         name: found.dir_name.clone(),
         source: SkillSource::Local { path: dest_path.clone() },
@@ -281,6 +308,16 @@ pub fn import_skill(found: &FoundSkill, copy_to_aiem: bool) -> Result<Skill> {
         deployments,
         file_hashes: Default::default(),
     };
+
+    // If we successfully extracted the skill out of a real IDE's skills
+    // directory, recreate a symlink/junction at the original path so the
+    // IDE continues to see the skill.  Failures here are non-fatal — the
+    // user can always trigger a manual deploy later.
+    if did_migrate {
+        if crate::ide::find(&found.ide_id).is_some() {
+            let _ = crate::skills::install::deploy(&mut skill, &found.ide_id, None);
+        }
+    }
 
     reg.upsert(skill.clone());
     reg.save()?;

@@ -91,8 +91,14 @@ pub fn undeploy(
     Ok(link)
 }
 
-/// Remove a skill from the registry and delete its on-disk content plus any
-/// tracked deployments.
+/// Remove a skill from the registry and move its on-disk content (plus any
+/// tracked deployments) out of the active config tree.
+///
+/// Deployments (symlinks / junctions in IDE skills dirs) are unlinked
+/// normally, but the skill's **content directory** under
+/// `~/.aiem/skills/<id>/` is moved to the recycle bin at
+/// `~/.aiem/trash/` rather than being deleted outright, so the user can
+/// recover from an accidental removal.
 pub fn remove_skill(reg: &mut SkillRegistry, id: &str) -> Result<()> {
     let Some(mut skill) = reg.remove(id) else {
         return Err(Error::NotFound(format!("skill `{id}` not found")));
@@ -110,7 +116,13 @@ pub fn remove_skill(reg: &mut SkillRegistry, id: &str) -> Result<()> {
         }
     }
     if skill.path.starts_with(paths::skills_dir()?) && skill.path.exists() {
-        remove_path(&skill.path)?;
+        // Recycle instead of hard-delete.  Fall back to outright removal
+        // only if the trash move fails, so we never leave an orphan
+        // directory behind.
+        let label = format!("skill-{}", crate::fs_util::sanitize_for_path(&skill.id));
+        if crate::fs_util::move_to_trash(&skill.path, &label).is_err() {
+            crate::fs_util::remove_path(&skill.path)?;
+        }
     }
     Ok(())
 }

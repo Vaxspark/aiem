@@ -134,6 +134,7 @@ mod tests {
                 args: vec!["hi".into()],
                 env: BTreeMap::new(),
                 cwd: None,
+                bundle: None,
             },
             targets: targets.iter().map(|s| s.to_string()).collect(),
             description: None,

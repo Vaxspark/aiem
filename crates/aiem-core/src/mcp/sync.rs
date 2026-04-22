@@ -52,15 +52,68 @@ pub fn execute(
 ) -> Result<Vec<(String, PathBuf)>> {
     let mut touched = Vec::new();
     for (ide, names) in &plan.writes {
-        let servers: Vec<McpServer> = names
-            .iter()
-            .filter_map(|n| reg.get(n).cloned())
-            .map(expand_server_secrets)
-            .collect();
+        let mut servers: Vec<McpServer> = Vec::with_capacity(names.len());
+        for n in names {
+            let Some(s) = reg.get(n).cloned() else { continue };
+            let s = expand_server_secrets(s);
+            let s = materialize_bundle(s, project_root)?;
+            servers.push(s);
+        }
         let path = adapters::apply(ide, project_root, &servers)?;
         touched.push((ide.clone(), path));
     }
     Ok(touched)
+}
+
+/// If `s` declares a bundle, copy it into the appropriate on-disk location
+/// (`<project>/.aiem-mcp/<name>/` when deploying to a project, otherwise the
+/// user's global bundles directory) and expand `{BUNDLE}` placeholders in
+/// `command`/`args`/`env`/`cwd`.
+fn materialize_bundle(mut s: McpServer, project_root: Option<&Path>) -> Result<McpServer> {
+    use crate::mcp::bundles;
+    let McpTransport::Stdio {
+        command,
+        args,
+        env,
+        cwd,
+        bundle: Some(bundle_name),
+    } = &mut s.transport
+    else {
+        return Ok(s);
+    };
+
+    let src = bundles::bundle_path(bundle_name)?;
+    if !src.exists() {
+        tracing::warn!(bundle = %bundle_name, "mcp bundle missing on disk; leaving placeholders untouched");
+        return Ok(s);
+    }
+
+    let bundle_dir = match project_root {
+        Some(root) => {
+            let dest = root.join(".aiem-mcp").join(bundle_name.as_str());
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            if dest.exists() {
+                crate::fs_util::remove_path(&dest)?;
+            }
+            crate::fs_util::copy_dir_safe(&src, &dest)?;
+            dest
+        }
+        None => src,
+    };
+
+    *command = bundles::expand_placeholder(command, &bundle_dir);
+    for a in args.iter_mut() {
+        *a = bundles::expand_placeholder(a, &bundle_dir);
+    }
+    for (_, v) in env.iter_mut() {
+        *v = bundles::expand_placeholder(v, &bundle_dir);
+    }
+    if let Some(c) = cwd {
+        *c = bundles::expand_placeholder(c, &bundle_dir);
+    }
+    Ok(s)
 }
 
 /// Return a clone of `s` with `${secret:NAME}` placeholders resolved via the

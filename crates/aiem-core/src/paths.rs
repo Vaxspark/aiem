@@ -47,9 +47,21 @@ pub fn backup_config_file() -> Result<PathBuf> { Ok(home()?.join("backup.json"))
 /// `0600` perms on Unix.  Primary storage remains the OS keyring.
 pub fn backup_token_file() -> Result<PathBuf> { Ok(home()?.join(".backup-token")) }
 
+/// Recycle bin: `~/.aiem/trash/`.  When a skill or MCP bundle is removed,
+/// its on-disk content is moved here (under a timestamped subdirectory)
+/// instead of being deleted outright, so the user can recover from an
+/// accidental deletion.  Never synced to git backup.
+pub fn trash_dir() -> Result<PathBuf> { Ok(home()?.join("trash")) }
+
+/// Source storage for MCP "bundles" — local script folders that an MCP
+/// server depends on.  Layout: `~/.aiem/mcp/bundles/<bundle_name>/`.
+/// Synced to the git backup.  At deploy time, a bundle is copied into the
+/// target project as `<project>/.aiem-mcp/<bundle_name>/`.
+pub fn mcp_bundles_dir() -> Result<PathBuf> { Ok(mcp_dir()?.join("bundles")) }
+
 /// Create all standard dirs if missing.
 pub fn ensure_layout() -> Result<()> {
-    for p in [home()?, skills_dir()?, mcp_dir()?, backups_dir()?, cache_dir()?, snapshots_dir()?] {
+    for p in [home()?, skills_dir()?, mcp_dir()?, backups_dir()?, cache_dir()?, snapshots_dir()?, mcp_bundles_dir()?] {
         std::fs::create_dir_all(&p)?;
     }
     Ok(())

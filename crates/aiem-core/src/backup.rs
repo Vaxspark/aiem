@@ -280,6 +280,23 @@ pub fn export_to_dir(dest_dir: &Path) -> Result<Vec<PathBuf>> {
             copied.push(dst);
         }
     }
+    // Also snapshot every MCP bundle directory so user-made Python/Node
+    // scripts travel with the backup.
+    let bundles_src = paths::mcp_bundles_dir()?;
+    if bundles_src.exists() {
+        let bundles_dst = dest_dir.join("mcp_bundles");
+        // Wipe any stale copy so deletions propagate.
+        if bundles_dst.exists() {
+            let _ = std::fs::remove_dir_all(&bundles_dst);
+        }
+        for entry in std::fs::read_dir(&bundles_src)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() { continue; }
+            let name = entry.file_name();
+            copy_dir_all(&entry.path(), &bundles_dst.join(&name))?;
+            copied.push(bundles_dst.join(&name));
+        }
+    }
     Ok(copied)
 }
 
@@ -294,6 +311,23 @@ pub fn import_from_dir(src_dir: &Path) -> Result<Vec<PathBuf>> {
                 std::fs::create_dir_all(p)?;
             }
             std::fs::copy(&src, &dst)?;
+            restored.push(dst);
+        }
+    }
+    // Restore bundle directories.
+    let bundles_src = src_dir.join("mcp_bundles");
+    if bundles_src.is_dir() {
+        let bundles_dst = paths::mcp_bundles_dir()?;
+        std::fs::create_dir_all(&bundles_dst)?;
+        for entry in std::fs::read_dir(&bundles_src)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() { continue; }
+            let name = entry.file_name();
+            let dst = bundles_dst.join(&name);
+            if dst.exists() {
+                let _ = std::fs::remove_dir_all(&dst);
+            }
+            copy_dir_all(&entry.path(), &dst)?;
             restored.push(dst);
         }
     }

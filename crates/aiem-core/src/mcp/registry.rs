@@ -41,9 +41,16 @@ impl McpRegistry {
     }
 
     pub fn remove(&mut self, name: &str) -> Result<McpServer> {
-        self.inner
+        let server = self
+            .inner
             .servers
             .remove(name)
-            .ok_or_else(|| Error::NotFound(format!("mcp server `{name}` not found")))
+            .ok_or_else(|| Error::NotFound(format!("mcp server `{name}` not found")))?;
+        // If this server owns a local bundle, send it to the trash so the
+        // on-disk script doesn't leak after the registry entry is gone.
+        if let crate::mcp::model::McpTransport::Stdio { bundle: Some(b), .. } = &server.transport {
+            let _ = crate::mcp::bundles::remove_bundle(b);
+        }
+        Ok(server)
     }
 }

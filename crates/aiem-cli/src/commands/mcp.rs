@@ -182,6 +182,7 @@ fn add(a: AddArgs) -> anyhow::Result<()> {
                 args: a.arg,
                 env: a.env.into_iter().collect(),
                 cwd: a.cwd,
+                bundle: None,
             }
         }
         TransportKind::Http => {
@@ -258,7 +259,7 @@ fn json_to_mcp_server(name: &str, val: &serde_json::Value) -> anyhow::Result<Mcp
             .map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
             .unwrap_or_default();
         let cwd = obj.get("cwd").and_then(|v| v.as_str()).map(String::from);
-        McpTransport::Stdio { command: cmd.to_string(), args, env, cwd }
+        McpTransport::Stdio { command: cmd.to_string(), args, env, cwd, bundle: None }
     } else if let Some(url) = obj.get("url").and_then(|v| v.as_str()) {
         let headers: BTreeMap<String, String> = obj.get("headers")
             .and_then(|v| v.as_object())

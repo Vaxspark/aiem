@@ -28,6 +28,8 @@ pub fn router() -> Router<AppState> {
         .route("/mcp/:name/remove", post(remove))
         .route("/mcp/:name/deploy-action", post(deploy_action))
         .route("/mcp/sync", post(sync_all))
+        .route("/mcp/bundle/import", post(bundle_import))
+        .route("/mcp/bundle/:name/remove", post(bundle_remove))
 }
 
 const TEMPLATE: &str = r#"{
@@ -48,9 +50,11 @@ async fn index(State(st): State<AppState>, Query(q): Query<ListQuery>) -> Markup
         (page_header("MCP Servers", "Register Model Context Protocol servers and sync them to every IDE.", html! {
             form hx-post="/mcp/sync" hx-swap="none" { (btn_secondary("Sync all IDEs")) }
             button type="button" class="btn-primary" onclick="toggleHidden('mcp-add')" { "+ Add server" }
+            button type="button" class="btn-ghost" onclick="toggleHidden('mcp-bundles')" { "Bundles" }
         }))
 
         div id="mcp-add" hidden { (add_forms()) }
+        div id="mcp-bundles" hidden { (bundles_panel()) }
 
         form class="aiem-card" style="display:flex;gap:8px;align-items:center;margin-bottom:12px"
              hx-get="/mcp/fragment" hx-target="#mcp-list" hx-trigger="input changed delay:200ms from:input[name=q], refresh"
@@ -95,7 +99,8 @@ fn add_forms() -> Markup {
                 div { label class="label" { "Name *" } input name="name" required class="field"; }
                 div { label class="label" { "Command *" } input name="command" required placeholder="npx" class="field"; }
                 div style="grid-column:span 2" { label class="label" { "Args" } input name="args" placeholder="-y @modelcontextprotocol/server-filesystem C:\\" class="field"; }
-                div style="grid-column:span 3" { label class="label" { "Targets (comma)" } input name="targets" value="codex,claude-code,copilot" class="field"; }
+                div style="grid-column:span 2" { label class="label" { "Targets (comma)" } input name="targets" value="codex,claude-code,copilot" class="field"; }
+                div style="grid-column:span 2" { label class="label" { "Bundle (optional)" } input name="bundle" placeholder="my-mcp" class="field"; }
                 div class="flex items-end" { (btn_primary("Add")) }
             }
         }
@@ -127,12 +132,13 @@ fn render(reg: Option<&McpRegistry>, filter: &str) -> Markup {
 
 fn render_card(s: &McpServer, projects: &[(String, String)]) -> Markup {
     let (kind, detail) = match &s.transport {
-        McpTransport::Stdio { command, args, env, cwd } => {
+        McpTransport::Stdio { command, args, env, cwd, bundle } => {
             let mut d = format!("{command} {}", args.join(" "));
             if let Some(cwd) = cwd { d.push_str(&format!("  (cwd: {cwd})")); }
             if !env.is_empty() {
                 d.push_str(&format!("  [env: {}]", env.keys().cloned().collect::<Vec<_>>().join(",")));
             }
+            if let Some(b) = bundle { d.push_str(&format!("  [bundle: {b}]")); }
             ("stdio", d)
         }
         McpTransport::Http { url, .. } => ("http", url.clone()),
@@ -231,6 +237,7 @@ struct QuickForm {
     command: String,
     #[serde(default)] args: String,
     #[serde(default)] targets: String,
+    #[serde(default)] bundle: String,
 }
 
 async fn add_quick(State(st): State<AppState>, Form(f): Form<QuickForm>) -> Response {
@@ -243,10 +250,14 @@ async fn add_quick(State(st): State<AppState>, Form(f): Form<QuickForm>) -> Resp
     let targets: Vec<String> = f.targets.split(',')
         .filter_map(|s| { let t = s.trim(); if t.is_empty() { None } else { Some(t.to_string()) } })
         .collect();
+    let bundle = {
+        let b = f.bundle.trim();
+        if b.is_empty() { None } else { Some(b.to_string()) }
+    };
     let name = f.name.clone();
     reg.upsert(McpServer {
         name: name.clone(),
-        transport: McpTransport::Stdio { command: f.command, args, env: Default::default(), cwd: None },
+        transport: McpTransport::Stdio { command: f.command, args, env: Default::default(), cwd: None, bundle },
         targets,
         description: None,
         tags: vec![],
@@ -381,7 +392,7 @@ fn json_to_server(name: &str, val: &serde_json::Value) -> Result<McpServer, Stri
             .map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
             .unwrap_or_default();
         let cwd = obj.get("cwd").and_then(|v| v.as_str()).map(String::from);
-        McpTransport::Stdio { command: cmd.to_string(), args, env, cwd }
+        McpTransport::Stdio { command: cmd.to_string(), args, env, cwd, bundle: None }
     } else if let Some(url) = obj.get("url").and_then(|v| v.as_str()) {
         let headers: BTreeMap<String, String> = obj.get("headers").and_then(|v| v.as_object())
             .map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
@@ -404,4 +415,94 @@ fn json_to_server(name: &str, val: &serde_json::Value) -> Result<McpServer, Stri
         tags: vec![],
         disabled: false,
     })
+}
+
+// ─── Bundle management ──────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct BundleImportForm {
+    name: String,
+    src_path: String,
+}
+
+async fn bundle_import(
+    State(st): State<AppState>,
+    Form(f): Form<BundleImportForm>,
+) -> Response {
+    let tx = st.events.clone();
+    let _g = st.write_lock.lock().await;
+    let src = std::path::PathBuf::from(f.src_path.trim());
+    match mcp::bundles::import_bundle(f.name.trim(), &src) {
+        Ok(p) => {
+            toast_info(&tx, format!("bundle imported to {}", p.display()));
+            invalidate(&tx, ResourceKind::Mcp);
+        }
+        Err(e) => toast_error(&tx, format!("{e}")),
+    }
+    http_ok()
+}
+
+async fn bundle_remove(
+    State(st): State<AppState>,
+    Path(name): Path<String>,
+) -> Response {
+    let tx = st.events.clone();
+    let _g = st.write_lock.lock().await;
+    match mcp::bundles::remove_bundle(&name) {
+        Ok(_) => {
+            toast_info(&tx, format!("bundle `{name}` moved to trash"));
+            invalidate(&tx, ResourceKind::Mcp);
+        }
+        Err(e) => toast_error(&tx, format!("{e}")),
+    }
+    http_ok()
+}
+
+fn bundles_panel() -> Markup {
+    let bundles = mcp::bundles::list_bundles().unwrap_or_default();
+    let bundle_dir = aiem_core::paths::mcp_bundles_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_default();
+    html! {
+        (card(html! {
+            div class="text-sm font-semibold mb-2" { "MCP Bundles" }
+            p class="meta" style="margin-bottom:12px" {
+                "Copy a local script directory into " code { (bundle_dir) } ". \
+                 Reference the deployed path in a server's command/args as " code { "{BUNDLE}" } "."
+            }
+            form hx-post="/mcp/bundle/import" hx-swap="none"
+                 hx-on--after-request="this.reset()"
+                 class="grid gap-3" style="grid-template-columns:repeat(3,1fr);align-items:end;margin-bottom:12px" {
+                div { label class="label" { "Bundle name *" } input name="name" required placeholder="my-mcp" class="field"; }
+                div style="grid-column:span 2" { label class="label" { "Source directory *" } input name="src_path" required placeholder="/abs/path/to/local/mcp" class="field"; }
+                div { (btn_primary("Import bundle")) }
+            }
+
+            @if bundles.is_empty() {
+                p class="meta" { "No bundles yet." }
+            } @else {
+                table class="table" style="width:100%" {
+                    thead { tr { th { "Name" } th { "Path" } th { "Actions" } } }
+                    tbody {
+                        @for b in &bundles {
+                            tr {
+                                td { code { (b) } }
+                                td class="muted" style="font-size:12px" { (format!("{}/{}", bundle_dir, b)) }
+                                td {
+                                    form method="post"
+                                         action={"/mcp/bundle/" (urlencoding::encode(b)) "/remove"}
+                                         hx-post={"/mcp/bundle/" (urlencoding::encode(b)) "/remove"}
+                                         hx-swap="none"
+                                         hx-confirm={"Move bundle " (b) " to trash?"}
+                                         style="display:inline" {
+                                        (btn_danger("Delete"))
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }))
+    }
 }

@@ -42,7 +42,7 @@ fn load(path: &Path) -> Result<Value> {
 
 fn server_to_json(s: &McpServer) -> Value {
     match &s.transport {
-        McpTransport::Stdio { command, args, env, cwd } => {
+        McpTransport::Stdio { command, args, env, cwd, bundle: _ } => {
             let mut obj = Map::new();
             obj.insert("type".into(), json!("stdio"));
             obj.insert("command".into(), json!(command));
@@ -147,6 +147,7 @@ fn parse_transport(obj: &Map<String, Value>) -> McpTransport {
                 .unwrap_or_default(),
             env: parse_str_map(obj.get("env")),
             cwd: obj.get("cwd").and_then(|v| v.as_str()).map(String::from),
+            bundle: None,
         },
     }
 }

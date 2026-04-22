@@ -193,3 +193,65 @@ pub fn copy_dir_safe(src: &Path, dst: &Path) -> Result<()> {
     }
     Ok(())
 }
+
+/// Normalize an arbitrary string into a filesystem-safe fragment.
+///
+/// Replaces anything that is not alphanumeric, `_`, or `-` with `_`.
+/// Useful when deriving a directory name from a user-supplied id.
+pub fn sanitize_for_path(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .collect()
+}
+
+/// Move `path` into the recycle bin at `~/.aiem/trash/<timestamp>-<name>/`.
+///
+/// Unlike [`remove_path`], this preserves the content so the user can
+/// recover from an accidental deletion.  If `path` is a symlink / junction
+/// we only unlink it (the target is left untouched); for regular files and
+/// directories we attempt a rename first (fast, atomic on the same volume)
+/// and fall back to copy-then-remove when crossing filesystem boundaries.
+///
+/// Returns the destination path inside the trash, or `None` if `path` did
+/// not exist.
+pub fn move_to_trash(path: &Path, label: &str) -> Result<Option<PathBuf>> {
+    let meta = match fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e.into()),
+    };
+
+    // Symlinks / junctions: just unlink them.  Their targets may live
+    // outside the trash scope and we don't want to drag those along.
+    if meta.file_type().is_symlink() || is_reparse_point(&meta) {
+        remove_path(path)?;
+        return Ok(None);
+    }
+
+    let trash_root = paths::trash_dir()?;
+    fs::create_dir_all(&trash_root)?;
+    let ts = Utc::now().format("%Y%m%d-%H%M%S").to_string();
+    let safe_label = sanitize_for_path(label);
+    let mut dest = trash_root.join(format!("{ts}-{safe_label}"));
+    // Avoid collision within the same second.
+    let mut n = 1;
+    while dest.exists() {
+        dest = trash_root.join(format!("{ts}-{safe_label}-{n}"));
+        n += 1;
+    }
+
+    // Fast path: rename on same volume.
+    if fs::rename(path, &dest).is_ok() {
+        return Ok(Some(dest));
+    }
+
+    // Cross-device fallback: copy then remove.
+    if meta.is_dir() {
+        copy_dir_safe(path, &dest)?;
+    } else {
+        if let Some(p) = dest.parent() { fs::create_dir_all(p)?; }
+        fs::copy(path, &dest)?;
+    }
+    remove_path(path)?;
+    Ok(Some(dest))
+}
