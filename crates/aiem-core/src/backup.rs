@@ -95,6 +95,41 @@ impl BackupConfig {
     }
 }
 
+/// Save the GitHub backup token to `~/.aiem/.backup-token` with `0600` perms
+/// on Unix.  This is a fallback for environments where the OS keyring cannot
+/// persist secrets across process restarts (notably Linux systemd user
+/// services using the session keyring).
+pub fn save_backup_token_file(token: &str) -> Result<()> {
+    let p = paths::backup_token_file()?;
+    if let Some(parent) = p.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&p, token)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
+/// Load the GitHub backup token from `~/.aiem/.backup-token` if present.
+pub fn load_backup_token_file() -> Option<String> {
+    let p = paths::backup_token_file().ok()?;
+    let s = std::fs::read_to_string(&p).ok()?;
+    let t = s.trim().to_string();
+    if t.is_empty() { None } else { Some(t) }
+}
+
+/// Delete the fallback token file if present.
+pub fn delete_backup_token_file() -> Result<()> {
+    let p = paths::backup_token_file()?;
+    if p.exists() {
+        std::fs::remove_file(&p)?;
+    }
+    Ok(())
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn now_secs() -> u64 {

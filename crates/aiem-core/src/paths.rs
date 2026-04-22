@@ -41,6 +41,12 @@ pub fn backup_git_dir() -> Result<PathBuf> { Ok(home()?.join("backup-git")) }
 /// Backup preferences file: `~/.aiem/backup.json`
 pub fn backup_config_file() -> Result<PathBuf> { Ok(home()?.join("backup.json")) }
 
+/// Plain-text fallback slot for the GitHub backup token, used when the OS
+/// keyring cannot persist the secret (e.g. systemd user services on Linux,
+/// which run in their own non-interactive session keyring).  Written with
+/// `0600` perms on Unix.  Primary storage remains the OS keyring.
+pub fn backup_token_file() -> Result<PathBuf> { Ok(home()?.join(".backup-token")) }
+
 /// Create all standard dirs if missing.
 pub fn ensure_layout() -> Result<()> {
     for p in [home()?, skills_dir()?, mcp_dir()?, backups_dir()?, cache_dir()?, snapshots_dir()?] {

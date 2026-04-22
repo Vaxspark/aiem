@@ -119,7 +119,8 @@ fn ok() -> Response { (axum::http::StatusCode::OK, "ok").into_response() }
 
 fn backup_card(cfg: &BackupConfig, last_backup: &str) -> Markup {
     let repo_val = cfg.github_repo.as_deref().unwrap_or("");
-    let has_token = std::env::var("GITHUB_TOKEN").map(|s| !s.is_empty()).unwrap_or(false);
+    let has_token = std::env::var("GITHUB_TOKEN").map(|s| !s.is_empty()).unwrap_or(false)
+        || aiem_core::backup::load_backup_token_file().is_some();
     card(html!{
         div class="flex items-center justify-between mb-3" {
             div class="text-sm font-semibold" { "Backup & Restore" }
@@ -254,6 +255,9 @@ async fn backup_save_config(State(st): State<AppState>, Form(f): Form<SaveConfig
     }
 
     if !token.is_empty() {
+        // Primary: OS keyring.  On Linux systemd user services this may not
+        // persist across restarts (session keyring), so also write a
+        // filesystem fallback at `~/.aiem/.backup-token` (0600).
         match Vault::load() {
             Ok(mut vault) => {
                 if let Err(e) = vault.set(GH_TOKEN_NAME, &token, Some("GitHub Personal Access Token".into())) {
@@ -263,6 +267,10 @@ async fn backup_save_config(State(st): State<AppState>, Form(f): Form<SaveConfig
                 std::env::set_var("GITHUB_TOKEN", &token);
             }
             Err(e) => { toast_error(&tx, format!("vault: {e}")); return ok(); }
+        }
+        if let Err(e) = aiem_core::backup::save_backup_token_file(&token) {
+            toast_error(&tx, format!("token file: {e}"));
+            return ok();
         }
         toast_info(&tx, "Backup config and token saved");
     } else {
@@ -366,7 +374,8 @@ fn load_backup_target() -> std::result::Result<(String, Option<String>), String>
         .or_else(|| {
             Vault::load().ok().and_then(|v| v.get(GH_TOKEN_NAME).ok())
         })
-        .filter(|s| !s.is_empty());
+        .filter(|s| !s.is_empty())
+        .or_else(aiem_core::backup::load_backup_token_file);
     Ok((repo, token))
 }
 
