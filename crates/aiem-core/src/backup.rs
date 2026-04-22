@@ -323,7 +323,7 @@ pub fn push_github(repo_url: &str, token: Option<&str>) -> Result<()> {
 
     // Init repo on first run.
     if !work_dir.join(".git").exists() {
-        git_run(&work_dir, &["init", "-b", "main"], None)?;
+        git_init_main(&work_dir)?;
     }
 
     // Export config files into the working tree.
@@ -399,7 +399,7 @@ pub fn pull_github(repo_url: &str, token: Option<&str>) -> Result<()> {
 
     if !work_dir.join(".git").exists() {
         std::fs::create_dir_all(&work_dir)?;
-        git_run(&work_dir, &["init", "-b", "main"], None)?;
+        git_init_main(&work_dir)?;
         git_run(&work_dir, &["remote", "add", "origin", &auth_url], None)?;
         git_run(&work_dir, &["fetch", "origin", "main"], proxy)?;
         git_run(&work_dir, &["reset", "--hard", "origin/main"], None)?;
@@ -452,6 +452,15 @@ fn build_auth_url(url: &str, token: Option<&str>) -> Result<String> {
         // SSH URL — PAT doesn't apply; return as-is.
         Ok(url.to_owned())
     }
+}
+
+/// `git init` with `main` as the default branch, portable across git versions
+/// (`git init -b main` only works on git 2.28+; Ubuntu 20.04 ships 2.25).
+fn git_init_main(dir: &Path) -> Result<()> {
+    git_run(dir, &["init"], None)?;
+    // Repoint HEAD to refs/heads/main regardless of the host's default.
+    let _ = git_run(dir, &["symbolic-ref", "HEAD", "refs/heads/main"], None);
+    Ok(())
 }
 
 /// Run a git subcommand, optionally routing through an HTTP proxy.
