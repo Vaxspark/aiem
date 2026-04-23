@@ -20,6 +20,10 @@ pub struct State {
     pub deploy_scope: std::collections::HashMap<String, String>,
     /// server name -> cached list of project names it's deployed to (chips row)
     pub deployed_cache: std::collections::HashMap<String, Vec<String>>,
+    /// bundles panel open
+    pub bundles_open: bool,
+    pub bundle_name_input: String,
+    pub bundle_src_input: String,
 }
 
 pub fn show(ui: &mut egui::Ui, app: &mut App) {
@@ -39,10 +43,16 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         if ui.button(i18n::t("mcp.new")).clicked() {
             app.mcp_state.add_open = !app.mcp_state.add_open;
         }
+        if ui.button("Bundles").clicked() {
+            app.mcp_state.bundles_open = !app.mcp_state.bundles_open;
+        }
     });
 
     if app.mcp_state.add_open {
         render_add(ui, app);
+    }
+    if app.mcp_state.bundles_open {
+        render_bundles(ui, app);
     }
 
     ui.horizontal(|ui| {
@@ -433,3 +443,107 @@ fn empty_state(ui: &mut egui::Ui, title: &str, sub: &str) {
         ui.label(RichText::new(sub).color(theme::MUTED()));
     });
 }
+
+fn render_bundles(ui: &mut egui::Ui, app: &mut App) {
+    card(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("MCP Bundles").strong().color(theme::TEXT()));
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("local script folders for custom stdio servers; reference via {BUNDLE} placeholder")
+                    .small()
+                    .color(theme::MUTED()),
+            );
+        });
+        ui.add_space(6.0);
+
+        let bundles_dir = match aiem_core::paths::mcp_bundles_dir() {
+            Ok(p) => p,
+            Err(e) => {
+                ui.label(RichText::new(format!("error: {e}")).color(theme::DANGER()));
+                return;
+            }
+        };
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("location:").small().color(theme::MUTED()));
+            ui.label(
+                RichText::new(bundles_dir.to_string_lossy().into_owned())
+                    .monospace()
+                    .small()
+                    .color(theme::TEXT()),
+            );
+        });
+        ui.add_space(8.0);
+
+        // Import form.
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("name").small().color(theme::MUTED()));
+            ui.add(
+                egui::TextEdit::singleline(&mut app.mcp_state.bundle_name_input)
+                    .desired_width(140.0)
+                    .hint_text("my-mcp"),
+            );
+            ui.label(RichText::new("source").small().color(theme::MUTED()));
+            ui.add(
+                egui::TextEdit::singleline(&mut app.mcp_state.bundle_src_input)
+                    .desired_width(280.0)
+                    .hint_text("C:\\path\\to\\local\\mcp"),
+            );
+            if ui.button("Pick folder\u{2026}").clicked() {
+                if let Some(p) = rfd::FileDialog::new().pick_folder() {
+                    app.mcp_state.bundle_src_input = p.to_string_lossy().into_owned();
+                }
+            }
+            let can_import = !app.mcp_state.bundle_name_input.trim().is_empty()
+                && !app.mcp_state.bundle_src_input.trim().is_empty();
+            if ui
+                .add_enabled(can_import, egui::Button::new("Import bundle"))
+                .clicked()
+            {
+                let name = app.mcp_state.bundle_name_input.trim().to_string();
+                let src = std::path::PathBuf::from(app.mcp_state.bundle_src_input.trim());
+                match aiem_core::mcp::bundles::import_bundle(&name, &src) {
+                    Ok(p) => {
+                        app.toast_info(format!("bundle imported to {}", p.display()));
+                        app.mcp_state.bundle_name_input.clear();
+                        app.mcp_state.bundle_src_input.clear();
+                    }
+                    Err(e) => app.toast_error(format!("{e}")),
+                }
+            }
+        });
+        ui.add_space(8.0);
+
+        let bundles = aiem_core::mcp::bundles::list_bundles().unwrap_or_default();
+        if bundles.is_empty() {
+            ui.label(RichText::new("No bundles imported yet.").color(theme::MUTED()));
+            return;
+        }
+        egui::Grid::new("mcp-bundles-grid")
+            .num_columns(3)
+            .spacing([12.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                for b in &bundles {
+                    ui.label(RichText::new(b).monospace().color(theme::TEXT()));
+                    ui.label(
+                        RichText::new(bundles_dir.join(b).to_string_lossy().into_owned())
+                            .small()
+                            .color(theme::MUTED()),
+                    );
+                    if ui
+                        .small_button(RichText::new("move to trash").color(theme::DANGER()))
+                        .clicked()
+                    {
+                        match aiem_core::mcp::bundles::remove_bundle(b) {
+                            Ok(_) => app.toast_info(format!("bundle `{b}` moved to trash")),
+                            Err(e) => app.toast_error(format!("{e}")),
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+    });
+    ui.add_space(10.0);
+}
+

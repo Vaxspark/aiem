@@ -130,6 +130,9 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     render_backup_card(ui, app);
     ui.add_space(10.0);
 
+    render_trash_card(ui, app);
+    ui.add_space(10.0);
+
     card(ui, |ui| {
         ui.label(RichText::new("About").strong().color(theme::TEXT()));
         ui.add_space(6.0);
@@ -339,3 +342,103 @@ fn render_backup_card(ui: &mut egui::Ui, app: &mut App) {
         );
     });
 }
+
+// ─── Trash card ────────────────────────────────────────────────────────
+
+fn render_trash_card(ui: &mut egui::Ui, app: &mut App) {
+    card(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Trash").strong().color(theme::TEXT()));
+            ui.add_space(6.0);
+            ui.label(
+                RichText::new("scanned / removed content is moved here instead of being hard-deleted")
+                    .small()
+                    .color(theme::MUTED()),
+            );
+        });
+        ui.add_space(6.0);
+
+        let trash_dir = match paths::trash_dir() {
+            Ok(p) => p,
+            Err(e) => {
+                ui.label(RichText::new(format!("trash dir error: {e}")).color(theme::DANGER()));
+                return;
+            }
+        };
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("location:").small().color(theme::MUTED()));
+            ui.label(
+                RichText::new(trash_dir.to_string_lossy().into_owned())
+                    .monospace()
+                    .small()
+                    .color(theme::TEXT()),
+            );
+        });
+        ui.add_space(6.0);
+
+        let entries: Vec<(String, std::path::PathBuf)> = if trash_dir.exists() {
+            let mut v: Vec<(String, std::path::PathBuf)> = std::fs::read_dir(&trash_dir)
+                .ok()
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok())
+                .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
+                .collect();
+            v.sort_by(|a, b| b.0.cmp(&a.0));
+            v
+        } else {
+            Vec::new()
+        };
+
+        if entries.is_empty() {
+            ui.label(RichText::new("Trash is empty.").color(theme::MUTED()));
+            return;
+        }
+
+        ui.horizontal(|ui| {
+            ui.label(
+                RichText::new(format!("{} entries", entries.len())).color(theme::MUTED()),
+            );
+            if ui
+                .button(RichText::new("Empty trash").color(theme::DANGER()))
+                .on_hover_text("permanently delete every entry in trash")
+                .clicked()
+            {
+                let mut removed = 0usize;
+                for (_, p) in &entries {
+                    if aiem_core::fs_util::remove_path(p).is_ok() {
+                        removed += 1;
+                    }
+                }
+                app.toast_info(format!("deleted {removed} trash entries"));
+            }
+        });
+        ui.add_space(4.0);
+
+        egui::Grid::new("trash-grid")
+            .num_columns(3)
+            .spacing([12.0, 4.0])
+            .striped(true)
+            .show(ui, |ui| {
+                for (name, path) in &entries {
+                    ui.label(RichText::new(name).monospace().small().color(theme::TEXT()));
+                    ui.label(
+                        RichText::new(path.to_string_lossy().into_owned())
+                            .small()
+                            .color(theme::MUTED()),
+                    );
+                    if ui
+                        .small_button(RichText::new("delete").color(theme::DANGER()))
+                        .clicked()
+                    {
+                        match aiem_core::fs_util::remove_path(path) {
+                            Ok(_) => app.toast_info(format!("deleted `{name}`")),
+                            Err(e) => app.toast_error(format!("{e}")),
+                        }
+                    }
+                    ui.end_row();
+                }
+            });
+    });
+}
+
