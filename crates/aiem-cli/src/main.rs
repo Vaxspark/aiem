@@ -43,11 +43,6 @@ pub enum Cmd {
         #[command(subcommand)]
         cmd: commands::secret::SecretCmd,
     },
-    /// Manage profiles (named skill/MCP subsets you can switch between).
-    Profile {
-        #[command(subcommand)]
-        cmd: commands::profile::ProfileCmd,
-    },
     /// Discover existing skills & MCP servers on this machine and import them.
     Discover {
         #[command(subcommand)]
@@ -81,16 +76,20 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Init => commands::init()?,
         Cmd::Ide { cmd } => commands::ide::run(cmd)?,
         Cmd::Skill { cmd } => commands::skill::run(cmd).await?,
-        Cmd::Mcp { cmd } => commands::mcp::run(cmd)?,
+        Cmd::Mcp { cmd } => commands::mcp::run(cmd).await?,
         Cmd::Secret { cmd } => commands::secret::run(cmd)?,
-        Cmd::Profile { cmd } => commands::profile::run(cmd)?,
         Cmd::Discover { cmd } => commands::discover::run(cmd)?,
         Cmd::Backup { cmd } => commands::backup::run(cmd)?,
         #[cfg(feature = "web")]
         Cmd::Serve { host, port, open } => {
             use std::net::{IpAddr, SocketAddr};
-            let ip: IpAddr = host.parse().map_err(|e| anyhow::anyhow!("invalid --host `{host}`: {e}"))?;
-            let cfg = aiem_web::ServeConfig { addr: SocketAddr::new(ip, port), open_browser: open };
+            let ip: IpAddr = host
+                .parse()
+                .map_err(|e| anyhow::anyhow!("invalid --host `{host}`: {e}"))?;
+            let cfg = aiem_web::ServeConfig {
+                addr: SocketAddr::new(ip, port),
+                open_browser: open,
+            };
             aiem_web::serve(cfg).await?;
         }
     }
@@ -104,11 +103,14 @@ fn init_tracing(verbosity: u8) {
         2 => "debug",
         _ => "trace",
     };
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(format!("aiem={level},aiem_cli={level},aiem_core={level}")));
-    tracing_subscriber::fmt()
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new(format!(
+            "aiem={level},aiem_cli={level},aiem_core={level}"
+        ))
+    });
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
         .compact()
-        .init();
+        .try_init();
 }

@@ -29,7 +29,12 @@ pub enum SecretCmd {
 
 pub fn run(cmd: SecretCmd) -> anyhow::Result<()> {
     match cmd {
-        SecretCmd::Set { name, value, stdin, description } => {
+        SecretCmd::Set {
+            name,
+            value,
+            stdin,
+            description,
+        } => {
             let v = if let Some(v) = value {
                 v
             } else if stdin {

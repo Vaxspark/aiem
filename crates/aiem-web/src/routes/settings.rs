@@ -8,9 +8,13 @@ use serde::Deserialize;
 use aiem_core::backup::{AutoInterval, BackupConfig};
 use aiem_core::secrets::Vault;
 
-use crate::layout::{btn_danger, btn_primary, card, empty_state, page, page_header, tag, TagKind};
+use crate::events::ResourceKind;
+use crate::layout::{
+    btn_danger, btn_primary, card, empty_state, page, page_header, settings_group, settings_row,
+    tag, TagKind,
+};
 use crate::state::AppState;
-use crate::tasks::{task_finished, task_started, toast_error, toast_info};
+use crate::tasks::{invalidate, task_finished, task_started, toast_error, toast_info};
 
 const GH_TOKEN_NAME: &str = "github_token";
 
@@ -32,55 +36,71 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn index(State(_st): State<AppState>) -> Markup {
-    let has_token = std::env::var("GITHUB_TOKEN").map(|s| !s.is_empty()).unwrap_or(false);
-    let aiem_home = aiem_core::paths::home().map(|p| p.display().to_string()).unwrap_or_else(|_| "?".into());
+    let has_token = std::env::var("GITHUB_TOKEN")
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let aiem_home = aiem_core::paths::home()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "?".into());
     let backup_cfg = BackupConfig::load().unwrap_or_default();
-    let last_backup = backup_cfg.last_backup_ts
+    let last_backup = backup_cfg
+        .last_backup_ts
         .map(aiem_core::backup::time_ago)
         .unwrap_or_else(|| "never".into());
 
-    page("Settings", "/settings", html! {
-        (page_header("Settings", "Credentials, paths, and runtime info.", html!{}))
-        (card(html!{
-            div class="text-sm font-semibold mb-2" { "GitHub Token" }
-            p class="meta mb-3" {
-                "Stored in the OS keyring. Loaded automatically at startup. "
-                "Only needed to avoid the 60-request/hour anonymous rate limit."
+    page(
+        "Settings",
+        "/settings",
+        html! {
+            (page_header("Settings", "", html!{}))
+            div class="content-padding wide-content" {
+                (settings_group("GitHub Token", html! {
+                    (settings_row(
+                        "Personal Access Token",
+                        "Stored in the OS keyring. Avoids 60-req/h anonymous rate limit.",
+                        html! {
+                            @if has_token { (tag("configured", TagKind::Success)) }
+                            @else { span class="meta" { "not set" } }
+                        },
+                    ))
+                    div style="padding:12px 16px;border-top:1px solid var(--stroke-light)" {
+                        form hx-post="/settings/github-token" hx-swap="none" class="flex gap-2 items-end" {
+                            input name="token" type="password" placeholder="ghp_..." required class="field" style="flex:1";
+                            (btn_primary("Save"))
+                        }
+                        form hx-post="/settings/github-token/clear" hx-swap="none" hx-confirm="Clear stored token?" style="margin-top:8px" {
+                            (btn_danger("Clear"))
+                        }
+                    }
+                }))
+
+                (backup_card(&backup_cfg, &last_backup))
+
+                (settings_group("Host Info", html! {
+                    (settings_row("AIEM_HOME", "", html! { span class="mono" { (aiem_home) } }))
+                    (settings_row("Hostname", "", html! { span class="mono" { (hostname()) } }))
+                    (settings_row("User", "", html! { span class="mono" { (whoami()) } }))
+                    (settings_row("OS", "", html! { span class="mono" { (std::env::consts::OS) " / " (std::env::consts::ARCH) } }))
+                }))
+
+                (settings_group("Trash", html! {
+                    (settings_row(
+                        "Removed content",
+                        "Items are moved to a local trash folder instead of being hard-deleted.",
+                        html! { a href="/settings/trash" class="btn-secondary" style="text-decoration:none" { "Open trash" } },
+                    ))
+                }))
+
+                (settings_group("About", html! {
+                    (settings_row(
+                        "Version",
+                        "aiem-web — headless management for skills & MCP across IDEs.",
+                        html! { span class="mono" { (env!("CARGO_PKG_VERSION")) } },
+                    ))
+                }))
             }
-            div class="mb-3" {
-                @if has_token { (tag("● configured", TagKind::Success)) }
-                @else         { span class="meta" { "○ no token set" } }
-            }
-            form hx-post="/settings/github-token" hx-swap="none" class="flex gap-2 items-end" {
-                input name="token" type="password" placeholder="ghp_..." required class="field" style="flex:1";
-                (btn_primary("Save"))
-            }
-            form hx-post="/settings/github-token/clear" hx-swap="none" hx-confirm="Clear stored token?" style="margin-top:8px" {
-                (btn_danger("Clear"))
-            }
-        }))
-        (backup_card(&backup_cfg, &last_backup))
-        (card(html!{
-            div class="text-sm font-semibold mb-2" { "Paths" }
-            dl class="grid gap-2" style="grid-template-columns:160px 1fr;font-size:13px" {
-                dt class="meta" { "AIEM_HOME" } dd class="mono" { (aiem_home) }
-                dt class="meta" { "Hostname" }  dd class="mono" { (hostname()) }
-                dt class="meta" { "User" }      dd class="mono" { (whoami()) }
-                dt class="meta" { "OS" }        dd class="mono" { (std::env::consts::OS) " / " (std::env::consts::ARCH) }
-            }
-        }))
-        (card(html!{
-            div class="text-sm font-semibold mb-2" { "Trash" }
-            p class="meta" style="margin-bottom:8px" {
-                "Scanned / removed content is moved to a local trash folder instead of being hard-deleted."
-            }
-            a href="/settings/trash" class="btn" { "Open trash" }
-        }))
-        (card(html!{
-            div class="text-sm font-semibold mb-2" { "About" }
-            p class="meta" { "aiem-web " (env!("CARGO_PKG_VERSION")) " — headless management for skills & MCP across IDEs." }
-        }))
-    })
+        },
+    )
 }
 
 fn hostname() -> String {
@@ -96,13 +116,25 @@ fn whoami() -> String {
 }
 
 #[derive(Deserialize)]
-struct TokenForm { token: String }
+struct TokenForm {
+    token: String,
+}
 
 async fn save_token(State(st): State<AppState>, Form(f): Form<TokenForm>) -> Response {
     let tx = st.events.clone();
     let _g = st.write_lock.lock().await;
-    let mut vault = match Vault::load() { Ok(v) => v, Err(e) => { toast_error(&tx, format!("{e}")); return ok(); } };
-    match vault.set(GH_TOKEN_NAME, &f.token, Some("GitHub Personal Access Token".into())) {
+    let mut vault = match Vault::load() {
+        Ok(v) => v,
+        Err(e) => {
+            toast_error(&tx, format!("{e}"));
+            return ok();
+        }
+    };
+    match vault.set(
+        GH_TOKEN_NAME,
+        &f.token,
+        Some("GitHub Personal Access Token".into()),
+    ) {
         Ok(()) => {
             std::env::set_var("GITHUB_TOKEN", &f.token);
             toast_info(&tx, "GITHUB_TOKEN saved to keyring");
@@ -115,23 +147,36 @@ async fn save_token(State(st): State<AppState>, Form(f): Form<TokenForm>) -> Res
 async fn clear_token(State(st): State<AppState>) -> Response {
     let tx = st.events.clone();
     let _g = st.write_lock.lock().await;
-    let mut vault = match Vault::load() { Ok(v) => v, Err(e) => { toast_error(&tx, format!("{e}")); return ok(); } };
+    let mut vault = match Vault::load() {
+        Ok(v) => v,
+        Err(e) => {
+            toast_error(&tx, format!("{e}"));
+            return ok();
+        }
+    };
     match vault.delete(GH_TOKEN_NAME) {
-        Ok(()) => { std::env::remove_var("GITHUB_TOKEN"); toast_info(&tx, "cleared"); }
+        Ok(()) => {
+            std::env::remove_var("GITHUB_TOKEN");
+            toast_info(&tx, "cleared");
+        }
         Err(e) => toast_error(&tx, format!("{e}")),
     }
     ok()
 }
 
-fn ok() -> Response { (axum::http::StatusCode::OK, "ok").into_response() }
+fn ok() -> Response {
+    (axum::http::StatusCode::OK, "ok").into_response()
+}
 
 // ─── Backup card ─────────────────────────────────────────────────────────────
 
 fn backup_card(cfg: &BackupConfig, last_backup: &str) -> Markup {
     let repo_val = cfg.github_repo.as_deref().unwrap_or("");
-    let has_token = std::env::var("GITHUB_TOKEN").map(|s| !s.is_empty()).unwrap_or(false)
+    let has_token = std::env::var("GITHUB_TOKEN")
+        .map(|s| !s.is_empty())
+        .unwrap_or(false)
         || aiem_core::backup::load_backup_token_file().is_some();
-    card(html!{
+    card(html! {
         div class="flex items-center justify-between mb-3" {
             div class="text-sm font-semibold" { "Backup & Restore" }
             span class="meta text-xs" { "Last backup: " (last_backup) }
@@ -191,7 +236,7 @@ fn backup_card(cfg: &BackupConfig, last_backup: &str) -> Markup {
         div {
             p class="text-xs font-semibold mb-2" { "GitHub backup" }
             p class="meta text-xs mb-2" {
-                "Commits the three config files to a private GitHub repo. "
+                "Commits skills, MCP, projects, and local skill content to a private GitHub repo. "
                 "Uses " code class="mono" { "~/.aiem/backup-git/" } " as git working tree. Requires " code class="mono" { "git" } " in PATH."
             }
 
@@ -246,7 +291,7 @@ fn backup_card(cfg: &BackupConfig, last_backup: &str) -> Markup {
 
 #[derive(Deserialize)]
 struct SaveConfigForm {
-    repo:  String,
+    repo: String,
     #[serde(default)]
     token: String,
     #[serde(default)]
@@ -261,19 +306,30 @@ async fn backup_save_config(State(st): State<AppState>, Form(f): Form<SaveConfig
     let tx = st.events.clone();
     let _g = st.write_lock.lock().await;
 
-    let repo  = f.repo.trim().to_string();
+    let repo = f.repo.trim().to_string();
     let token = f.token.trim().to_string();
 
     match BackupConfig::load() {
         Ok(mut cfg) => {
-            cfg.github_repo = if repo.is_empty() { None } else { Some(repo.clone()) };
-            cfg.http_proxy  = if f.proxy.trim().is_empty() { None } else { Some(f.proxy.trim().to_string()) };
+            cfg.github_repo = if repo.is_empty() {
+                None
+            } else {
+                Some(repo.clone())
+            };
+            cfg.http_proxy = if f.proxy.trim().is_empty() {
+                None
+            } else {
+                Some(f.proxy.trim().to_string())
+            };
             if let Err(e) = cfg.save() {
                 toast_error(&tx, format!("save config: {e}"));
                 return ok();
             }
         }
-        Err(e) => { toast_error(&tx, format!("load config: {e}")); return ok(); }
+        Err(e) => {
+            toast_error(&tx, format!("load config: {e}"));
+            return ok();
+        }
     }
 
     if !token.is_empty() {
@@ -287,7 +343,11 @@ async fn backup_save_config(State(st): State<AppState>, Form(f): Form<SaveConfig
         // Best-effort keyring storage: failures here don't block persistence.
         match Vault::load() {
             Ok(mut vault) => {
-                if let Err(e) = vault.set(GH_TOKEN_NAME, &token, Some("GitHub Personal Access Token".into())) {
+                if let Err(e) = vault.set(
+                    GH_TOKEN_NAME,
+                    &token,
+                    Some("GitHub Personal Access Token".into()),
+                ) {
                     tracing::warn!("keyring set failed (using file fallback): {e}");
                 }
             }
@@ -309,7 +369,7 @@ async fn backup_snapshot(State(st): State<AppState>) -> Response {
     tokio::task::spawn_blocking(move || {
         task_started(&tx, id, "Taking local snapshot");
         match aiem_core::backup::snapshot_local() {
-            Ok(p)  => task_finished(&tx, id, true,  format!("Snapshot saved: {}", p.display())),
+            Ok(p) => task_finished(&tx, id, true, format!("Snapshot saved: {}", p.display())),
             Err(e) => task_finished(&tx, id, false, format!("Snapshot failed: {e}")),
         }
     });
@@ -317,7 +377,9 @@ async fn backup_snapshot(State(st): State<AppState>) -> Response {
 }
 
 #[derive(Deserialize)]
-struct ExportForm { dest: String }
+struct ExportForm {
+    dest: String,
+}
 async fn backup_export(State(st): State<AppState>, Form(f): Form<ExportForm>) -> Response {
     let tx = st.events.clone();
     let id = st.next_task_id().await;
@@ -325,15 +387,22 @@ async fn backup_export(State(st): State<AppState>, Form(f): Form<ExportForm>) ->
         let dest = std::path::PathBuf::from(f.dest.trim());
         task_started(&tx, id, format!("Exporting to {}", dest.display()));
         match aiem_core::backup::export_to_dir(&dest) {
-            Ok(files) => task_finished(&tx, id, true,  format!("Exported {} file(s) to {}", files.len(), dest.display())),
-            Err(e)    => task_finished(&tx, id, false, format!("Export failed: {e}")),
+            Ok(files) => task_finished(
+                &tx,
+                id,
+                true,
+                format!("Exported {} file(s) to {}", files.len(), dest.display()),
+            ),
+            Err(e) => task_finished(&tx, id, false, format!("Export failed: {e}")),
         }
     });
     ok()
 }
 
 #[derive(Deserialize)]
-struct ImportForm { src: String }
+struct ImportForm {
+    src: String,
+}
 async fn backup_import(State(st): State<AppState>, Form(f): Form<ImportForm>) -> Response {
     let tx = st.events.clone();
     let id = st.next_task_id().await;
@@ -341,8 +410,13 @@ async fn backup_import(State(st): State<AppState>, Form(f): Form<ImportForm>) ->
         let src = std::path::PathBuf::from(f.src.trim());
         task_started(&tx, id, format!("Restoring from {}", src.display()));
         match aiem_core::backup::import_from_dir(&src) {
-            Ok(files) => task_finished(&tx, id, true,  format!("Restored {} file(s)", files.len())),
-            Err(e)    => task_finished(&tx, id, false, format!("Restore failed: {e}")),
+            Ok(files) => {
+                task_finished(&tx, id, true, format!("Restored {} file(s)", files.len()));
+                invalidate(&tx, ResourceKind::Skills);
+                invalidate(&tx, ResourceKind::Mcp);
+                invalidate(&tx, ResourceKind::Projects);
+            }
+            Err(e) => task_finished(&tx, id, false, format!("Restore failed: {e}")),
         }
     });
     ok()
@@ -353,13 +427,16 @@ async fn backup_push(State(st): State<AppState>) -> Response {
     let id = st.next_task_id().await;
     tokio::task::spawn_blocking(move || {
         let (repo, token) = match load_backup_target() {
-            Ok(v)  => v,
-            Err(e) => { task_finished(&tx, id, false, e); return; }
+            Ok(v) => v,
+            Err(e) => {
+                task_finished(&tx, id, false, e);
+                return;
+            }
         };
         task_started(&tx, id, format!("Pushing to {}", repo));
         match aiem_core::backup::push_github(&repo, token.as_deref()) {
-            Ok(())  => task_finished(&tx, id, true,  format!("Pushed to {}", repo)),
-            Err(e)  => task_finished(&tx, id, false, format!("Push failed: {e}")),
+            Ok(()) => task_finished(&tx, id, true, format!("Pushed to {}", repo)),
+            Err(e) => task_finished(&tx, id, false, format!("Push failed: {e}")),
         }
     });
     ok()
@@ -370,13 +447,21 @@ async fn backup_pull(State(st): State<AppState>) -> Response {
     let id = st.next_task_id().await;
     tokio::task::spawn_blocking(move || {
         let (repo, token) = match load_backup_target() {
-            Ok(v)  => v,
-            Err(e) => { task_finished(&tx, id, false, e); return; }
+            Ok(v) => v,
+            Err(e) => {
+                task_finished(&tx, id, false, e);
+                return;
+            }
         };
         task_started(&tx, id, format!("Pulling from {}", repo));
         match aiem_core::backup::pull_github(&repo, token.as_deref()) {
-            Ok(())  => task_finished(&tx, id, true,  format!("Restored from {}", repo)),
-            Err(e)  => task_finished(&tx, id, false, format!("Pull failed: {e}")),
+            Ok(()) => {
+                task_finished(&tx, id, true, format!("Restored from {}", repo));
+                invalidate(&tx, ResourceKind::Skills);
+                invalidate(&tx, ResourceKind::Mcp);
+                invalidate(&tx, ResourceKind::Projects);
+            }
+            Err(e) => task_finished(&tx, id, false, format!("Pull failed: {e}")),
         }
     });
     ok()
@@ -388,28 +473,32 @@ async fn backup_pull(State(st): State<AppState>) -> Response {
 /// process restarts (e.g. when the systemd service is restarted after
 /// the user saved it earlier).
 fn load_backup_target() -> std::result::Result<(String, Option<String>), String> {
-    let cfg  = BackupConfig::load().map_err(|e| format!("load config: {e}"))?;
+    let cfg = BackupConfig::load().map_err(|e| format!("load config: {e}"))?;
     let repo = cfg.github_repo.unwrap_or_default();
     if repo.trim().is_empty() {
-        return Err("No backup repo URL configured. Fill the form and click 'Save config' first.".to_string());
+        return Err(
+            "No backup repo URL configured. Fill the form and click 'Save config' first."
+                .to_string(),
+        );
     }
-    let token = std::env::var("GITHUB_TOKEN").ok()
+    let token = std::env::var("GITHUB_TOKEN")
+        .ok()
         .filter(|s| !s.is_empty())
-        .or_else(|| {
-            Vault::load().ok().and_then(|v| v.get(GH_TOKEN_NAME).ok())
-        })
+        .or_else(|| Vault::load().ok().and_then(|v| v.get(GH_TOKEN_NAME).ok()))
         .filter(|s| !s.is_empty())
         .or_else(aiem_core::backup::load_backup_token_file);
     Ok((repo, token))
 }
 
 #[derive(Deserialize)]
-struct IntervalForm { interval: String }
+struct IntervalForm {
+    interval: String,
+}
 async fn backup_set_interval(State(_st): State<AppState>, Form(f): Form<IntervalForm>) -> Response {
     let interval = match f.interval.as_str() {
-        "daily"  => AutoInterval::Daily,
+        "daily" => AutoInterval::Daily,
         "weekly" => AutoInterval::Weekly,
-        _        => AutoInterval::Never,
+        _ => AutoInterval::Never,
     };
     match BackupConfig::load() {
         Ok(mut cfg) => {
@@ -425,8 +514,12 @@ async fn backup_set_interval(State(_st): State<AppState>, Form(f): Form<Interval
 // ─── Trash ───────────────────────────────────────────────────────────────────
 
 fn list_trash_entries() -> Vec<(String, std::path::PathBuf)> {
-    let Ok(trash) = aiem_core::paths::trash_dir() else { return vec![] };
-    if !trash.exists() { return vec![] }
+    let Ok(trash) = aiem_core::paths::trash_dir() else {
+        return vec![];
+    };
+    if !trash.exists() {
+        return vec![];
+    }
     let mut out: Vec<(String, std::path::PathBuf)> = std::fs::read_dir(&trash)
         .ok()
         .into_iter()
@@ -506,10 +599,7 @@ async fn trash_empty(State(st): State<AppState>) -> Response {
     axum::response::Redirect::to("/settings/trash").into_response()
 }
 
-async fn trash_delete_entry(
-    State(st): State<AppState>,
-    Path(name): Path<String>,
-) -> Response {
+async fn trash_delete_entry(State(st): State<AppState>, Path(name): Path<String>) -> Response {
     let tx = st.events.clone();
     let Ok(trash) = aiem_core::paths::trash_dir() else {
         toast_error(&tx, "no trash dir");

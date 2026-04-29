@@ -1,9 +1,7 @@
-pub mod skills;
-pub mod mcp;
-pub mod ides;
-pub mod settings;
-pub mod secrets;
-pub mod profiles;
-pub mod projects;
 pub mod discover;
-pub mod store;
+pub mod ides;
+pub mod mcp;
+pub mod projects;
+pub mod secrets;
+pub mod settings;
+pub mod skills;

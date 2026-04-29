@@ -25,7 +25,6 @@ futures-util.workspace = true
 regex.workspace = true
 chrono.workspace = true
 keyring.workspace = true
-urlencoding = "2"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 keyring = { version = "3", default-features = false, features = ["windows-native"] }

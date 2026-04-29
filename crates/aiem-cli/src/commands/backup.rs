@@ -74,8 +74,8 @@ pub enum IntervalArg {
 impl From<IntervalArg> for backup::AutoInterval {
     fn from(a: IntervalArg) -> Self {
         match a {
-            IntervalArg::Never  => backup::AutoInterval::Never,
-            IntervalArg::Daily  => backup::AutoInterval::Daily,
+            IntervalArg::Never => backup::AutoInterval::Never,
+            IntervalArg::Daily => backup::AutoInterval::Daily,
             IntervalArg::Weekly => backup::AutoInterval::Weekly,
         }
     }
@@ -124,8 +124,12 @@ pub fn run(cmd: BackupCmd) -> anyhow::Result<()> {
         BackupCmd::Status => {
             let cfg = backup::BackupConfig::load()?;
             println!("auto-interval : {}", cfg.auto_interval.label());
-            println!("github repo   : {}", cfg.github_repo.as_deref().unwrap_or("(not set)"));
-            let last = cfg.last_backup_ts
+            println!(
+                "github repo   : {}",
+                cfg.github_repo.as_deref().unwrap_or("(not set)")
+            );
+            let last = cfg
+                .last_backup_ts
                 .map(backup::time_ago)
                 .unwrap_or_else(|| "never".into());
             println!("last backup   : {last}");
@@ -159,6 +163,8 @@ fn resolve_repo(explicit: Option<String>) -> anyhow::Result<String> {
     }
     let cfg = backup::BackupConfig::load()?;
     cfg.github_repo.ok_or_else(|| {
-        anyhow::anyhow!("no repo URL given and none saved; pass --repo https://github.com/you/backup-repo")
+        anyhow::anyhow!(
+            "no repo URL given and none saved; pass --repo https://github.com/you/backup-repo"
+        )
     })
 }

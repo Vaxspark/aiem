@@ -82,11 +82,7 @@ pub fn expand_placeholder(s: &str, bundle_dir: &Path) -> String {
 }
 
 fn sanitize_name(name: &str) -> Result<&str> {
-    if name.is_empty()
-        || name.contains('/')
-        || name.contains('\\')
-        || name.contains("..")
-    {
+    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
         return Err(Error::Invalid(format!("invalid bundle name: {name:?}")));
     }
     Ok(name)

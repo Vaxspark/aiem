@@ -30,7 +30,7 @@ pub enum McpCmd {
     List,
     /// Show one server's full definition as JSON.
     Show { name: String },
-    /// Remove an MCP server from the registry (does not retract from IDEs).
+    /// Remove an MCP server from the registry and retract from all IDE configs.
     Remove { name: String },
     /// Mark an MCP server as disabled (keeps the definition).
     Disable { name: String },
@@ -87,6 +87,22 @@ pub enum McpCmd {
         #[arg(long)]
         project: PathBuf,
     },
+    /// Import MCP server(s) from a GitHub repository.
+    ///
+    /// Two-phase flow: analyze the repo first (--preview), then confirm import.
+    ImportGithub {
+        /// owner/repo (e.g. `modelcontextprotocol/servers`).
+        repo: String,
+        /// Git ref (branch/tag/commit). Defaults to `main`.
+        #[arg(long, default_value = "main")]
+        r#ref: String,
+        /// Only preview the detected servers without saving anything.
+        #[arg(long)]
+        preview: bool,
+        /// Skip the confirmation prompt and import all detected servers.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Args, Debug)]
@@ -108,13 +124,19 @@ pub struct AddArgs {
     /// Working directory.
     #[arg(long)]
     pub cwd: Option<String>,
+    /// Existing bundle name to attach to this stdio server.
+    #[arg(long)]
+    pub bundle: Option<String>,
+    /// Local bundle directory to import before saving this stdio server.
+    #[arg(long)]
+    pub bundle_src: Option<PathBuf>,
     /// URL for http / sse transports.
     #[arg(long)]
     pub url: Option<String>,
     /// HTTP headers, `KEY=VALUE` (can be repeated).
     #[arg(long = "header", value_parser = parse_kv, allow_hyphen_values = true)]
     pub header: Vec<(String, String)>,
-    /// IDE targets (comma-separated). E.g. `--target codex,claude-code,copilot`.
+    /// IDE targets (comma-separated). Defaults to every supported IDE.
     #[arg(long, value_delimiter = ',')]
     pub target: Vec<String>,
     #[arg(long)]
@@ -125,11 +147,13 @@ pub struct AddArgs {
 }
 
 fn parse_kv(s: &str) -> Result<(String, String), String> {
-    let (k, v) = s.split_once('=').ok_or_else(|| format!("expected KEY=VALUE, got `{s}`"))?;
+    let (k, v) = s
+        .split_once('=')
+        .ok_or_else(|| format!("expected KEY=VALUE, got `{s}`"))?;
     Ok((k.to_string(), v.to_string()))
 }
 
-pub fn run(cmd: McpCmd) -> anyhow::Result<()> {
+pub async fn run(cmd: McpCmd) -> anyhow::Result<()> {
     match cmd {
         McpCmd::Add(a) => add(a),
         McpCmd::AddJson { input } => add_json(input),
@@ -140,15 +164,27 @@ pub fn run(cmd: McpCmd) -> anyhow::Result<()> {
         McpCmd::Enable { name } => toggle(&name, false),
         McpCmd::TargetAdd { name, ide } => target(&name, &ide, true),
         McpCmd::TargetRemove { name, ide } => target(&name, &ide, false),
-        McpCmd::Sync { ide, project, dry_run } => sync_cmd(ide, project, dry_run),
+        McpCmd::Sync {
+            ide,
+            project,
+            dry_run,
+        } => sync_cmd(ide, project, dry_run),
         McpCmd::Import { from, project } => import(&from, project),
         McpCmd::Path { ide, project } => path_cmd(&ide, project),
         McpCmd::Supported => {
-            for ide in adapters::SUPPORTED { println!("{ide}"); }
+            for ide in adapters::SUPPORTED {
+                println!("{ide}");
+            }
             Ok(())
         }
         McpCmd::Deploy { name, project } => deploy_cmd(&name, &project),
         McpCmd::Undeploy { name, project } => undeploy_cmd(&name, &project),
+        McpCmd::ImportGithub {
+            repo,
+            r#ref,
+            preview,
+            yes,
+        } => import_github_cmd(&repo, &r#ref, preview, yes).await,
     }
 }
 
@@ -173,34 +209,140 @@ fn undeploy_cmd(name: &str, project: &std::path::Path) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn import_github_cmd(
+    repo: &str,
+    r#ref: &str,
+    preview_only: bool,
+    yes: bool,
+) -> anyhow::Result<()> {
+    let (owner, name) = repo
+        .split_once('/')
+        .ok_or_else(|| anyhow::anyhow!("expected owner/repo format"))?;
+
+    let preview =
+        aiem_core::mcp::github::preview_github_mcp(owner, name, Some(r#ref), None).await?;
+
+    println!(
+        "Repository: {}/{}  ref: {}  commit: {}",
+        preview.owner,
+        preview.repo,
+        preview.r#ref,
+        &preview.commit[..preview.commit.len().min(12)]
+    );
+    for w in &preview.warnings {
+        println!("⚠ {w}");
+    }
+
+    if preview.servers.is_empty() {
+        println!("No MCP servers detected.");
+        return Ok(());
+    }
+
+    println!("\nDetected {} server(s):\n", preview.servers.len());
+    for (i, ps) in preview.servers.iter().enumerate() {
+        let rt_str = ps
+            .server
+            .runtime
+            .map(|r| format!("{r:?}"))
+            .unwrap_or_else(|| "unknown".into());
+        println!("  [{}] {} (runtime: {})", i + 1, ps.server.name, rt_str);
+        if let Some(ep) = &ps.entrypoint {
+            println!("      entry: {ep}");
+        }
+        println!(
+            "      files: {} kept, {} dropped",
+            ps.kept_files.len(),
+            ps.dropped_files.len()
+        );
+        if !ps.dropped_files.is_empty() {
+            let sample: Vec<&str> = ps
+                .dropped_files
+                .iter()
+                .take(5)
+                .map(|s| s.as_str())
+                .collect();
+            println!("      dropped sample: {}", sample.join(", "));
+        }
+        if !ps.detected_secrets.is_empty() {
+            println!(
+                "      secrets: {} token(s) will be saved to Vault",
+                ps.detected_secrets.len()
+            );
+        }
+        for w in &ps.warnings {
+            println!("      ⚠ {w}");
+        }
+    }
+
+    if preview_only {
+        println!("\n(preview only — use --yes to import)");
+        return Ok(());
+    }
+
+    if !yes {
+        println!("\nUse --yes to confirm import, or --preview to only preview.");
+        return Ok(());
+    }
+
+    let imported = aiem_core::mcp::github::import_github_mcp(&preview, None).await?;
+    println!("\n✓ Imported {} server(s):", imported.len());
+    for name in &imported {
+        println!("  - {name}");
+    }
+    Ok(())
+}
+
 fn add(a: AddArgs) -> anyhow::Result<()> {
+    let bundle_name = a
+        .bundle
+        .clone()
+        .or_else(|| a.bundle_src.as_ref().map(|_| a.name.clone()));
+    if let (Some(bundle), Some(src)) = (&bundle_name, &a.bundle_src) {
+        aiem_core::mcp::bundles::import_bundle(bundle, src)?;
+    }
+
     let transport = match a.r#type {
         TransportKind::Stdio => {
-            let command = a.command.ok_or_else(|| anyhow::anyhow!("--command is required for stdio"))?;
+            let command = a
+                .command
+                .ok_or_else(|| anyhow::anyhow!("--command is required for stdio"))?;
             McpTransport::Stdio {
                 command,
                 args: a.arg,
                 env: a.env.into_iter().collect(),
                 cwd: a.cwd,
-                bundle: None,
+                bundle: bundle_name,
             }
         }
         TransportKind::Http => {
-            let url = a.url.ok_or_else(|| anyhow::anyhow!("--url is required for http"))?;
-            McpTransport::Http { url, headers: a.header.into_iter().collect() }
+            let url = a
+                .url
+                .ok_or_else(|| anyhow::anyhow!("--url is required for http"))?;
+            McpTransport::Http {
+                url,
+                headers: a.header.into_iter().collect(),
+            }
         }
         TransportKind::Sse => {
-            let url = a.url.ok_or_else(|| anyhow::anyhow!("--url is required for sse"))?;
-            McpTransport::Sse { url, headers: a.header.into_iter().collect() }
+            let url = a
+                .url
+                .ok_or_else(|| anyhow::anyhow!("--url is required for sse"))?;
+            McpTransport::Sse {
+                url,
+                headers: a.header.into_iter().collect(),
+            }
         }
     };
     let server = McpServer {
         name: a.name.clone(),
         transport,
-        targets: a.target,
+        targets: default_mcp_targets(a.target),
         description: a.description,
         tags: a.tag,
         disabled: false,
+        source: None,
+        runtime: None,
+        auth_mode: Default::default(),
     };
     let mut reg = McpRegistry::load()?;
     reg.upsert(server);
@@ -221,13 +363,19 @@ fn add_json(input: Option<String>) -> anyhow::Result<()> {
     };
 
     let val: serde_json::Value = serde_json::from_str(json_str.trim())?;
-    let obj = val.as_object().ok_or_else(|| anyhow::anyhow!("expected JSON object"))?;
+    let obj = val
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("expected JSON object"))?;
 
     let mut servers = Vec::new();
 
     // Single server with "command"/"url" at top level
     if obj.contains_key("command") || obj.contains_key("url") {
-        let name = obj.get("name").and_then(|v| v.as_str()).unwrap_or("unnamed").to_string();
+        let name = obj
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unnamed")
+            .to_string();
         servers.push(json_to_mcp_server(&name, &val)?);
     } else {
         // Map of name -> config
@@ -247,46 +395,87 @@ fn add_json(input: Option<String>) -> anyhow::Result<()> {
 }
 
 fn json_to_mcp_server(name: &str, val: &serde_json::Value) -> anyhow::Result<McpServer> {
-    let obj = val.as_object().ok_or_else(|| anyhow::anyhow!("{name}: expected object"))?;
+    let obj = val
+        .as_object()
+        .ok_or_else(|| anyhow::anyhow!("{name}: expected object"))?;
 
     let transport = if let Some(cmd) = obj.get("command").and_then(|v| v.as_str()) {
-        let args: Vec<String> = obj.get("args")
+        let args: Vec<String> = obj
+            .get("args")
             .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
-        let env: BTreeMap<String, String> = obj.get("env")
+        let env: BTreeMap<String, String> = obj
+            .get("env")
             .and_then(|v| v.as_object())
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
         let cwd = obj.get("cwd").and_then(|v| v.as_str()).map(String::from);
-        McpTransport::Stdio { command: cmd.to_string(), args, env, cwd, bundle: None }
+        let bundle = obj.get("bundle").and_then(|v| v.as_str()).map(String::from);
+        McpTransport::Stdio {
+            command: cmd.to_string(),
+            args,
+            env,
+            cwd,
+            bundle,
+        }
     } else if let Some(url) = obj.get("url").and_then(|v| v.as_str()) {
-        let headers: BTreeMap<String, String> = obj.get("headers")
+        let headers: BTreeMap<String, String> = obj
+            .get("headers")
             .and_then(|v| v.as_object())
-            .map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())).collect())
+            .map(|m| {
+                m.iter()
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string()))
+                    .collect()
+            })
             .unwrap_or_default();
         let kind = obj.get("type").and_then(|v| v.as_str()).unwrap_or("sse");
         if kind == "http" {
-            McpTransport::Http { url: url.to_string(), headers }
+            McpTransport::Http {
+                url: url.to_string(),
+                headers,
+            }
         } else {
-            McpTransport::Sse { url: url.to_string(), headers }
+            McpTransport::Sse {
+                url: url.to_string(),
+                headers,
+            }
         }
     } else {
         anyhow::bail!("{name}: need 'command' (stdio) or 'url' (http/sse)");
     };
 
-    let targets: Vec<String> = obj.get("targets")
+    let targets: Vec<String> = obj
+        .get("targets")
         .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect())
-        .unwrap_or_else(|| vec!["codex".into(), "claude-code".into(), "copilot".into()]);
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_else(|| default_mcp_targets(Vec::new()));
 
     Ok(McpServer {
         name: name.to_string(),
         transport,
         targets,
-        description: obj.get("description").and_then(|v| v.as_str()).map(String::from),
+        description: obj
+            .get("description")
+            .and_then(|v| v.as_str())
+            .map(String::from),
         tags: vec![],
         disabled: false,
+        source: None,
+        runtime: None,
+        auth_mode: Default::default(),
     })
 }
 
@@ -296,17 +485,44 @@ fn list() -> anyhow::Result<()> {
     println!("{:<24} {:<8} {:<8} {}", "NAME", "TYPE", "STATE", "TARGETS");
     for s in reg.list() {
         any = true;
-        let ty = match s.transport { McpTransport::Stdio{..} => "stdio", McpTransport::Http{..} => "http", McpTransport::Sse{..} => "sse" };
+        let ty = match s.transport {
+            McpTransport::Stdio { .. } => "stdio",
+            McpTransport::Http { .. } => "http",
+            McpTransport::Sse { .. } => "sse",
+        };
         let state = if s.disabled { "disabled" } else { "enabled" };
-        println!("{:<24} {:<8} {:<8} {}", s.name, ty, state, s.targets.join(","));
+        println!(
+            "{:<24} {:<8} {:<8} {}",
+            s.name,
+            ty,
+            state,
+            s.targets.join(",")
+        );
     }
-    if !any { println!("(no mcp servers yet — try `aiem mcp add <name> --command npx --arg -y --arg pkg --target codex,claude-code,copilot`)"); }
+    if !any {
+        println!(
+            "(no mcp servers yet — try `aiem mcp add <name> --command npx --arg -y --arg pkg`; targets default to every supported IDE)"
+        );
+    }
     Ok(())
+}
+
+fn default_mcp_targets(targets: Vec<String>) -> Vec<String> {
+    if targets.is_empty() {
+        adapters::SUPPORTED
+            .iter()
+            .map(|ide| ide.to_string())
+            .collect()
+    } else {
+        targets
+    }
 }
 
 fn show(name: &str) -> anyhow::Result<()> {
     let reg = McpRegistry::load()?;
-    let s = reg.get(name).ok_or_else(|| anyhow::anyhow!("mcp server `{name}` not found"))?;
+    let s = reg
+        .get(name)
+        .ok_or_else(|| anyhow::anyhow!("mcp server `{name}` not found"))?;
     println!("{}", serde_json::to_string_pretty(s)?);
     Ok(())
 }
@@ -315,24 +531,33 @@ fn remove(name: &str) -> anyhow::Result<()> {
     let mut reg = McpRegistry::load()?;
     reg.remove(name)?;
     reg.save()?;
-    println!("✓ removed {name} (run `aiem mcp sync` or manually edit IDE configs to retract)");
+    println!("✓ removed {name} (also retracted from IDE configs)");
     Ok(())
 }
 
 fn toggle(name: &str, disabled: bool) -> anyhow::Result<()> {
     let mut reg = McpRegistry::load()?;
-    let s = reg.get_mut(name).ok_or_else(|| anyhow::anyhow!("mcp server `{name}` not found"))?;
+    let s = reg
+        .get_mut(name)
+        .ok_or_else(|| anyhow::anyhow!("mcp server `{name}` not found"))?;
     s.disabled = disabled;
     reg.save()?;
-    println!("✓ {name} is now {}", if disabled { "disabled" } else { "enabled" });
+    println!(
+        "✓ {name} is now {}",
+        if disabled { "disabled" } else { "enabled" }
+    );
     Ok(())
 }
 
 fn target(name: &str, ide: &str, add: bool) -> anyhow::Result<()> {
     let mut reg = McpRegistry::load()?;
-    let s = reg.get_mut(name).ok_or_else(|| anyhow::anyhow!("mcp server `{name}` not found"))?;
+    let s = reg
+        .get_mut(name)
+        .ok_or_else(|| anyhow::anyhow!("mcp server `{name}` not found"))?;
     if add {
-        if !s.targets.iter().any(|x| x == ide) { s.targets.push(ide.to_string()); }
+        if !s.targets.iter().any(|x| x == ide) {
+            s.targets.push(ide.to_string());
+        }
     } else {
         s.targets.retain(|x| x != ide);
     }
@@ -346,20 +571,22 @@ fn target(name: &str, ide: &str, add: bool) -> anyhow::Result<()> {
 
 fn sync_cmd(ides: Vec<String>, project: Option<PathBuf>, dry_run: bool) -> anyhow::Result<()> {
     let reg = McpRegistry::load()?;
-    let plan = sync::plan(&reg, &ides);
+    let plan = sync::plan(&reg, &ides, None);
     if plan.writes.is_empty() {
         println!("(nothing to sync)");
         return Ok(());
     }
     for (ide, names) in &plan.writes {
         println!("{ide}:");
-        for n in names { println!("  • {n}"); }
+        for n in names {
+            println!("  • {n}");
+        }
     }
     if dry_run {
         println!("(dry-run: no files were written)");
         return Ok(());
     }
-    let touched = sync::execute(&reg, &plan, project.as_deref())?;
+    let touched = sync::execute(&reg, &plan, project.as_deref(), None)?;
     for (ide, path) in touched {
         println!("✓ wrote {ide:<12} → {}", path.display());
     }
@@ -381,7 +608,9 @@ fn import(from: &str, project: Option<PathBuf>) -> anyhow::Result<()> {
         // Keep any existing targets, add this IDE.
         if let Some(existing) = reg.get(&s.name) {
             for t in &existing.targets {
-                if !s.targets.contains(t) { s.targets.push(t.clone()); }
+                if !s.targets.contains(t) {
+                    s.targets.push(t.clone());
+                }
             }
         }
         *counts.entry(s.name.clone()).or_default() += 1;

@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 
-use aiem_core::skills::{github, install, model::SkillSource, SkillRegistry};
+use aiem_core::skills::{
+    apply_github_proxy_env, github, install, model::SkillSource, SkillRegistry,
+};
 use clap::Subcommand;
 
 #[derive(Subcommand, Debug)]
@@ -62,7 +64,13 @@ pub enum SkillCmd {
 
 pub async fn run(cmd: SkillCmd) -> anyhow::Result<()> {
     match cmd {
-        SkillCmd::Add { source, name, r#ref, subdir, json } => add(source, name, r#ref, subdir, json).await,
+        SkillCmd::Add {
+            source,
+            name,
+            r#ref,
+            subdir,
+            json,
+        } => add(source, name, r#ref, subdir, json).await,
         SkillCmd::List => list(),
         SkillCmd::Info { id } => info(&id),
         SkillCmd::Update { id } => update(&id).await,
@@ -80,18 +88,31 @@ async fn add(
     subdir: Option<String>,
     json: bool,
 ) -> anyhow::Result<()> {
-    let parsed = SkillSource::parse_github(&source)
+    let normalized = apply_github_proxy_env(&source);
+    let parsed = SkillSource::parse_github(normalized)
         .ok_or_else(|| anyhow::anyhow!("invalid GitHub source: {source}"))?;
-    let SkillSource::GitHub { owner, repo, r#ref: parsed_ref, subdir: parsed_subdir } = parsed
+    let SkillSource::GitHub {
+        owner,
+        repo,
+        r#ref: parsed_ref,
+        subdir: parsed_subdir,
+    } = parsed
     else {
         anyhow::bail!("only GitHub sources are supported currently");
     };
     let reff = r#ref.or(parsed_ref);
     let subdir = subdir.or(parsed_subdir);
     if !json {
-        println!("→ fetching {}/{}{}{}", owner, repo,
-            subdir.as_deref().map(|s| format!("//{s}")).unwrap_or_default(),
-            reff.as_deref().map(|s| format!("@{s}")).unwrap_or_default());
+        println!(
+            "→ fetching {}/{}{}{}",
+            owner,
+            repo,
+            subdir
+                .as_deref()
+                .map(|s| format!("//{s}"))
+                .unwrap_or_default(),
+            reff.as_deref().map(|s| format!("@{s}")).unwrap_or_default()
+        );
     }
 
     let result = github::fetch_github_auto(
@@ -100,7 +121,8 @@ async fn add(
         reff.as_deref(),
         subdir.as_deref(),
         name.as_deref(),
-    ).await?;
+    )
+    .await?;
 
     let mut reg = SkillRegistry::load()?;
     for skill in &result.skills {
@@ -110,26 +132,32 @@ async fn add(
 
     // Auto-register detected MCP servers
     if !result.mcp_servers.is_empty() {
-        if let Ok(mut mcp_reg) = aiem_core::mcp::McpRegistry::load() {
-            let mcp_count = result.mcp_servers.len();
-            for s in &result.mcp_servers {
-                mcp_reg.upsert(s.clone());
-            }
-            if mcp_reg.save().is_ok() {
-                if !json {
-                    println!("✓ detected and registered {mcp_count} MCP server(s)");
-                }
-            }
+        let mcp_count = result.mcp_servers.len();
+        let mut mcp_reg = aiem_core::mcp::McpRegistry::load()?;
+        for s in &result.mcp_servers {
+            mcp_reg.upsert(s.clone());
+        }
+        mcp_reg.save()?;
+        if !json {
+            println!("✓ detected and registered {mcp_count} MCP server(s)");
         }
     }
 
     if json {
         let ids: Vec<&str> = result.skills.iter().map(|s| s.id.as_str()).collect();
         let mcp_names: Vec<&str> = result.mcp_servers.iter().map(|s| s.name.as_str()).collect();
-        println!("{}", serde_json::json!({ "added_skills": ids, "added_mcp": mcp_names }));
+        println!(
+            "{}",
+            serde_json::json!({ "added_skills": ids, "added_mcp": mcp_names })
+        );
     } else {
         for skill in &result.skills {
-            println!("✓ added  id={}  version={}  path={}", skill.id, short(&skill.version), skill.path.display());
+            println!(
+                "✓ added  id={}  version={}  path={}",
+                skill.id,
+                short(&skill.version),
+                skill.path.display()
+            );
         }
     }
     Ok(())
@@ -142,42 +170,69 @@ fn list() -> anyhow::Result<()> {
     for s in reg.list() {
         any = true;
         let deployments: Vec<String> = s.deployments.keys().cloned().collect();
-        let dep = if deployments.is_empty() { "-".into() } else { deployments.join(",") };
+        let dep = if deployments.is_empty() {
+            "-".into()
+        } else {
+            deployments.join(",")
+        };
         println!("{:<40} {:<10} {}", s.id, short(&s.version), dep);
     }
-    if !any { println!("(no skills installed yet — try `aiem skill add owner/repo`)"); }
+    if !any {
+        println!("(no skills installed yet — try `aiem skill add owner/repo`)");
+    }
     Ok(())
 }
 
 fn info(id: &str) -> anyhow::Result<()> {
     let reg = SkillRegistry::load()?;
-    let s = reg.get(id).ok_or_else(|| anyhow::anyhow!("skill `{id}` not found"))?;
+    let s = reg
+        .get(id)
+        .ok_or_else(|| anyhow::anyhow!("skill `{id}` not found"))?;
     println!("{}", serde_json::to_string_pretty(s)?);
     Ok(())
 }
 
 async fn update(id: &str) -> anyhow::Result<()> {
     let mut reg = SkillRegistry::load()?;
-    let existing = reg.get(id).cloned()
+    let existing = reg
+        .get(id)
+        .cloned()
         .ok_or_else(|| anyhow::anyhow!("skill `{id}` not found"))?;
-    let SkillSource::GitHub { owner, repo, r#ref, subdir } = existing.source.clone() else {
+    let SkillSource::GitHub {
+        owner,
+        repo,
+        r#ref,
+        subdir,
+    } = existing.source.clone()
+    else {
         anyhow::bail!("skill was not installed from GitHub");
     };
     let updated = github::fetch_github(
-        &owner, &repo,
-        None,  // always pull latest default branch
+        &owner,
+        &repo,
+        None, // always pull latest default branch
         subdir.as_deref(),
         Some(&existing.name),
-    ).await?;
+    )
+    .await?;
     let mut merged = updated;
     merged.deployments = existing.deployments;
     // Clear pinned ref so future updates also pull latest.
-    if let SkillSource::GitHub { r#ref: ref mut stored_ref, .. } = merged.source {
+    if let SkillSource::GitHub {
+        r#ref: ref mut stored_ref,
+        ..
+    } = merged.source
+    {
         *stored_ref = None;
     }
     reg.upsert(merged.clone());
     reg.save()?;
-    println!("✓ updated {}  {} -> {}", id, short(&existing.version), short(&merged.version));
+    println!(
+        "✓ updated {}  {} -> {}",
+        id,
+        short(&existing.version),
+        short(&merged.version)
+    );
     Ok(())
 }
 
@@ -191,7 +246,9 @@ fn remove(id: &str) -> anyhow::Result<()> {
 
 fn deploy(id: &str, ide: &str, project: Option<&std::path::Path>) -> anyhow::Result<()> {
     let mut reg = SkillRegistry::load()?;
-    let mut skill = reg.get(id).cloned()
+    let mut skill = reg
+        .get(id)
+        .cloned()
         .ok_or_else(|| anyhow::anyhow!("skill `{id}` not found"))?;
     let (link, kind) = install::deploy(&mut skill, ide, project)?;
     reg.upsert(skill);
@@ -202,7 +259,9 @@ fn deploy(id: &str, ide: &str, project: Option<&std::path::Path>) -> anyhow::Res
 
 fn undeploy(id: &str, ide: &str, project: Option<&std::path::Path>) -> anyhow::Result<()> {
     let mut reg = SkillRegistry::load()?;
-    let mut skill = reg.get(id).cloned()
+    let mut skill = reg
+        .get(id)
+        .cloned()
         .ok_or_else(|| anyhow::anyhow!("skill `{id}` not found"))?;
     let link = install::undeploy(&mut skill, ide, project)?;
     reg.upsert(skill);
@@ -213,19 +272,28 @@ fn undeploy(id: &str, ide: &str, project: Option<&std::path::Path>) -> anyhow::R
 
 fn sync(id: &str, ides: &[String], project: Option<&std::path::Path>) -> anyhow::Result<()> {
     let mut reg = SkillRegistry::load()?;
-    let mut skill = reg.get(id).cloned()
+    let mut skill = reg
+        .get(id)
+        .cloned()
         .ok_or_else(|| anyhow::anyhow!("skill `{id}` not found"))?;
+    let mut any_err = false;
     for ide in ides {
         match install::deploy(&mut skill, ide, project) {
             Ok((link, kind)) => println!("  ✓ {ide:<14} {} ({:?})", link.display(), kind),
-            Err(e) => eprintln!("  ✗ {ide:<14} {e}"),
+            Err(e) => {
+                any_err = true;
+                eprintln!("  ✗ {ide:<14} {e}");
+            }
         }
     }
     reg.upsert(skill);
     reg.save()?;
+    if any_err {
+        anyhow::bail!("one or more deploy operations failed; see errors above");
+    }
     Ok(())
 }
 
 fn short(v: &str) -> String {
-    if v.len() > 10 { v[..10].to_string() } else { v.to_string() }
+    v.chars().take(10).collect()
 }

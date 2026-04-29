@@ -4,17 +4,17 @@
 //! Default bind is `127.0.0.1:8787`; intended to be exposed via SSH port
 //! forwarding from the developer's laptop to the remote Linux box.
 
-mod state;
 mod events;
-mod tasks;
-mod layout;
 mod fs_merge;
+mod layout;
 mod routes;
+mod state;
+mod tasks;
 
 use std::net::SocketAddr;
 
+pub use events::{ResourceKind, ToastLevel, UiEvent};
 pub use state::AppState;
-pub use events::{UiEvent, ToastLevel, ResourceKind};
 
 use axum::Router;
 use tower_http::trace::TraceLayer;
@@ -49,10 +49,8 @@ pub async fn serve(cfg: ServeConfig) -> anyhow::Result<()> {
         .merge(routes::secrets::router())
         .merge(routes::settings::router())
         .merge(routes::ides::router())
-        .merge(routes::profiles::router())
         .merge(routes::projects::router())
         .merge(routes::discover::router())
-        .merge(routes::store::router())
         .merge(routes::events::router())
         .layer(TraceLayer::new_for_http())
         .with_state(state);
@@ -63,12 +61,15 @@ pub async fn serve(cfg: ServeConfig) -> anyhow::Result<()> {
 
     tracing::info!("aiem-web listening on http://{}", actual_addr);
     eprintln!("\n  aiem-web is running:  http://{}\n", actual_addr);
-    eprintln!("  (on a remote box, use:  ssh -L {port}:localhost:{port} user@host)\n",
-        port = actual_addr.port());
+    eprintln!(
+        "  (on a remote box, use:  ssh -L {port}:localhost:{port} user@host)\n",
+        port = actual_addr.port()
+    );
     if actual_addr.port() != cfg.addr.port() {
         eprintln!(
             "  Note: port {} was in use — using {} instead.\n",
-            cfg.addr.port(), actual_addr.port()
+            cfg.addr.port(),
+            actual_addr.port()
         );
     }
 
@@ -116,7 +117,9 @@ async fn shutdown_signal() {
 
 #[cfg(target_os = "windows")]
 fn webbrowser_open(url: &str) -> std::io::Result<()> {
-    std::process::Command::new("cmd").args(["/C", "start", "", url]).spawn()?;
+    std::process::Command::new("cmd")
+        .args(["/C", "start", "", url])
+        .spawn()?;
     Ok(())
 }
 #[cfg(target_os = "macos")]

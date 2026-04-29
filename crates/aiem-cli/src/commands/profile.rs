@@ -41,7 +41,11 @@ pub fn run(cmd: ProfileCmd) -> anyhow::Result<()> {
                 return Ok(());
             }
             for p in &items {
-                let marker = if active.as_deref() == Some(p.name.as_str()) { "*" } else { " " };
+                let marker = if active.as_deref() == Some(p.name.as_str()) {
+                    "*"
+                } else {
+                    " "
+                };
                 println!(
                     "{marker} {:<20}  skills={:<3} mcp={:<3}  {}",
                     p.name,
@@ -51,15 +55,31 @@ pub fn run(cmd: ProfileCmd) -> anyhow::Result<()> {
                 );
             }
         }
-        ProfileCmd::Set { name, description, skills, mcp_servers } => {
-            store.upsert(Profile { name: name.clone(), description, skills, mcp_servers });
+        ProfileCmd::Set {
+            name,
+            description,
+            skills,
+            mcp_servers,
+        } => {
+            store.upsert(Profile {
+                name: name.clone(),
+                description,
+                skills,
+                mcp_servers,
+            });
             store.save()?;
             println!("✓ saved profile `{name}`");
+            for w in store.validate() {
+                eprintln!("  ⚠ {w}");
+            }
         }
         ProfileCmd::Use { name } => {
             store.set_active(Some(&name))?;
             store.save()?;
             println!("✓ active profile: {name}");
+            for w in store.validate() {
+                eprintln!("  ⚠ {w}");
+            }
         }
         ProfileCmd::Clear => {
             store.set_active(None)?;
@@ -67,7 +87,9 @@ pub fn run(cmd: ProfileCmd) -> anyhow::Result<()> {
             println!("✓ active profile cleared");
         }
         ProfileCmd::Show { name } => {
-            let p = store.get(&name).ok_or_else(|| anyhow::anyhow!("profile `{name}` not found"))?;
+            let p = store
+                .get(&name)
+                .ok_or_else(|| anyhow::anyhow!("profile `{name}` not found"))?;
             println!("{}", serde_json::to_string_pretty(p)?);
         }
         ProfileCmd::Remove { name } => {
@@ -75,12 +97,10 @@ pub fn run(cmd: ProfileCmd) -> anyhow::Result<()> {
             store.save()?;
             println!("✓ removed profile `{name}`");
         }
-        ProfileCmd::Active => {
-            match store.active_name() {
-                Some(n) => println!("{n}"),
-                None => println!("(none)"),
-            }
-        }
+        ProfileCmd::Active => match store.active_name() {
+            Some(n) => println!("{n}"),
+            None => println!("(none)"),
+        },
     }
     Ok(())
 }

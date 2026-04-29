@@ -1,30 +1,39 @@
 use aiem_core::ide;
 use eframe::egui::{self, RichText};
 
-use crate::app::{card, page_header, App};
+use crate::app::App;
+use crate::i18n;
 use crate::theme;
+use crate::ui;
 
 pub fn show(ui: &mut egui::Ui, _app: &mut App) {
-    page_header(ui, "IDE Targets", "Directories aiem will symlink skill packages into", |_| {});
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        for i in ide::IDES {
-            card(ui, |ui| {
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.label(RichText::new(i.display_name).strong().size(16.0).color(theme::TEXT()));
-                        ui.label(RichText::new(i.id).monospace().small().color(theme::MUTED()));
+    ui::page_toolbar(ui, i18n::t("ides.title"), i18n::t("ides.subtitle"), |_| {});
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui::settings_group(ui, "", |ui| {
+                for (i, ide_def) in ide::IDES.iter().enumerate() {
+                    let pal = theme::p();
+                    let scope = match ide_def.default_scope {
+                        ide::Scope::User => "user",
+                        ide::Scope::Project => "project",
+                    };
+                    ui::settings_row(ui, ide_def.display_name, ide_def.id, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 4.0;
+                            ui::pill(ui, scope, pal.text_sec);
+                            ui.label(
+                                RichText::new(ide_def.skills_dir)
+                                    .size(11.0)
+                                    .monospace()
+                                    .color(pal.accent),
+                            );
+                        });
                     });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.label(RichText::new(i.skills_dir).monospace().color(theme::ACCENT()));
-                        let scope = match i.default_scope {
-                            aiem_core::ide::Scope::User => "user",
-                            aiem_core::ide::Scope::Project => "project",
-                        };
-                        theme::tag(ui, scope, theme::MUTED());
-                    });
-                });
+                    if i < ide::IDES.len() - 1 {
+                        ui.separator();
+                    }
+                }
             });
-            ui.add_space(10.0);
-        }
-    });
+        });
 }

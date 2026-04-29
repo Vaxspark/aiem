@@ -4,53 +4,66 @@ use eframe::egui::{self, Color32, FontFamily, FontId, Rounding, Shadow, Stroke, 
 
 // ─── Mode ───────────────────────────────────────────────────────────────────
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Mode { Light, Dark }
+pub enum Mode {
+    Light,
+    Dark,
+}
 
 /// Global palette resolved from the current mode.
 pub struct Palette {
-    pub bg:          Color32,
-    pub surface:     Color32,
-    pub surface_hi:  Color32,
+    pub bg: Color32,
+    pub surface: Color32,
+    pub surface_hi: Color32,
     pub surface_hov: Color32,
-    pub stroke:      Color32,
-    pub text:        Color32,
-    pub text_sec:    Color32,   // secondary / muted text
-    pub accent:      Color32,   // primary action
-    pub accent_fg:   Color32,   // text on accent bg
-    pub danger:      Color32,
-    pub tag_bg:      Color32,
-    pub tag_fg:      Color32,
+    pub stroke: Color32,
+    pub text: Color32,
+    pub text_sec: Color32,
+    pub accent: Color32,
+    pub accent_fg: Color32,
+    pub danger: Color32,
+    pub tag_bg: Color32,
+    #[allow(dead_code)]
+    pub tag_fg: Color32,
+    pub sidebar_bg: Color32,
+    pub selected: Color32,
+    pub warning: Color32,
 }
 
 pub fn palette(mode: Mode) -> Palette {
     match mode {
         Mode::Light => Palette {
-            bg:          Color32::from_rgb(0xF7, 0xF7, 0xF7),
-            surface:     Color32::WHITE,
-            surface_hi:  Color32::from_rgb(0xF0, 0xF0, 0xF0),
-            surface_hov: Color32::from_rgb(0xEA, 0xEA, 0xEA),
-            stroke:      Color32::from_rgb(0xDF, 0xDF, 0xDF),
-            text:        Color32::from_rgb(0x1A, 0x1A, 0x1A),
-            text_sec:    Color32::from_rgb(0x88, 0x88, 0x88),
-            accent:      Color32::from_rgb(0x1A, 0x1A, 0x1A),
-            accent_fg:   Color32::WHITE,
-            danger:      Color32::from_rgb(0xD0, 0x44, 0x44),
-            tag_bg:      Color32::from_rgb(0xEE, 0xEE, 0xEE),
-            tag_fg:      Color32::from_rgb(0x55, 0x55, 0x55),
+            bg: Color32::from_rgb(0xF5, 0xF5, 0xF7),
+            surface: Color32::WHITE,
+            surface_hi: Color32::from_rgb(0xEC, 0xEC, 0xEE),
+            surface_hov: Color32::from_rgb(0xE4, 0xE4, 0xE8),
+            stroke: Color32::from_rgb(0xD1, 0xD1, 0xD6),
+            text: Color32::from_rgb(0x1D, 0x1D, 0x1F),
+            text_sec: Color32::from_rgb(0x86, 0x86, 0x8B),
+            accent: Color32::from_rgb(0x00, 0x7A, 0xFF),
+            accent_fg: Color32::WHITE,
+            danger: Color32::from_rgb(0xFF, 0x3B, 0x30),
+            tag_bg: Color32::from_rgb(0xEC, 0xEC, 0xEE),
+            tag_fg: Color32::from_rgb(0x63, 0x63, 0x66),
+            sidebar_bg: Color32::from_rgb(0xEF, 0xEF, 0xF2),
+            selected: Color32::from_rgb(0xE6, 0xF0, 0xFF),
+            warning: Color32::from_rgb(0xFF, 0x9F, 0x0A),
         },
         Mode::Dark => Palette {
-            bg:          Color32::from_rgb(0x0E, 0x0E, 0x0E),
-            surface:     Color32::from_rgb(0x18, 0x18, 0x18),
-            surface_hi:  Color32::from_rgb(0x1E, 0x1E, 0x1E),
-            surface_hov: Color32::from_rgb(0x24, 0x24, 0x24),
-            stroke:      Color32::from_rgb(0x2E, 0x2E, 0x2E),
-            text:        Color32::from_rgb(0xE8, 0xE8, 0xE8),
-            text_sec:    Color32::from_rgb(0x6E, 0x6E, 0x6E),
-            accent:      Color32::WHITE,
-            accent_fg:   Color32::BLACK,
-            danger:      Color32::from_rgb(0xCC, 0x55, 0x55),
-            tag_bg:      Color32::from_rgb(0x24, 0x24, 0x24),
-            tag_fg:      Color32::from_rgb(0x99, 0x99, 0x99),
+            bg: Color32::from_rgb(0x16, 0x16, 0x18),
+            surface: Color32::from_rgb(0x2C, 0x2C, 0x2E),
+            surface_hi: Color32::from_rgb(0x3A, 0x3A, 0x3C),
+            surface_hov: Color32::from_rgb(0x48, 0x48, 0x4A),
+            stroke: Color32::from_rgb(0x38, 0x38, 0x3A),
+            text: Color32::from_rgb(0xF5, 0xF5, 0xF7),
+            text_sec: Color32::from_rgb(0x8E, 0x8E, 0x93),
+            accent: Color32::from_rgb(0x0A, 0x84, 0xFF),
+            accent_fg: Color32::WHITE,
+            danger: Color32::from_rgb(0xFF, 0x45, 0x3A),
+            tag_bg: Color32::from_rgb(0x38, 0x38, 0x3A),
+            tag_fg: Color32::from_rgb(0x8E, 0x8E, 0x93),
+            sidebar_bg: Color32::from_rgb(0x1E, 0x1E, 0x20),
+            selected: Color32::from_rgb(0x1A, 0x2A, 0x40),
+            warning: Color32::from_rgb(0xFF, 0xA6, 0x1A),
         },
     }
 }
@@ -71,37 +84,28 @@ pub fn set_mode(m: Mode) {
     CURRENT.with(|c| *c.borrow_mut() = m);
 }
 
-pub fn p() -> Palette { palette(current_mode()) }
-
-// Legacy compat: used by views as theme::TEXT(), theme::MUTED(), etc.
-// These are functions (not const) so they track the current mode.
-#[allow(non_snake_case)] pub fn TEXT()    -> Color32 { p().text }
-#[allow(non_snake_case)] pub fn MUTED()   -> Color32 { p().text_sec }
-#[allow(non_snake_case)] pub fn ACCENT()  -> Color32 { p().accent }
-#[allow(non_snake_case)] pub fn DANGER()  -> Color32 { p().danger }
-#[allow(non_snake_case)] pub fn SUCCESS() -> Color32 {
-    match current_mode() {
-        Mode::Light => Color32::from_rgb(0x1E, 0x7A, 0x3A), // dark green
-        Mode::Dark  => Color32::from_rgb(0x4A, 0xBB, 0x6A), // bright green
-    }
+pub fn p() -> Palette {
+    palette(current_mode())
 }
-#[allow(non_snake_case)] pub fn SURFACE() -> Color32 { p().surface }
 
-/// Subtle card shadow for elevation.
-pub fn card_shadow() -> Shadow {
+#[allow(non_snake_case)]
+pub fn ACCENT() -> Color32 {
+    p().accent
+}
+#[allow(non_snake_case)]
+pub fn DANGER() -> Color32 {
+    p().danger
+}
+#[allow(non_snake_case)]
+#[allow(non_snake_case)]
+pub fn WARNING() -> Color32 {
+    p().warning
+}
+#[allow(non_snake_case)]
+pub fn SUCCESS() -> Color32 {
     match current_mode() {
-        Mode::Light => Shadow {
-            offset: egui::vec2(0.0, 1.0),
-            blur: 4.0,
-            spread: 0.0,
-            color: Color32::from_black_alpha(10),
-        },
-        Mode::Dark => Shadow {
-            offset: egui::vec2(0.0, 1.0),
-            blur: 6.0,
-            spread: 0.0,
-            color: Color32::from_black_alpha(40),
-        },
+        Mode::Light => Color32::from_rgb(0x34, 0xC7, 0x59),
+        Mode::Dark => Color32::from_rgb(0x30, 0xD1, 0x58),
     }
 }
 
@@ -131,7 +135,7 @@ pub fn install(ctx: &egui::Context, mode: Mode) {
 
     let mut v = match mode {
         Mode::Light => Visuals::light(),
-        Mode::Dark  => Visuals::dark(),
+        Mode::Dark => Visuals::dark(),
     };
 
     v.override_text_color = Some(p.text);
@@ -142,8 +146,8 @@ pub fn install(ctx: &egui::Context, mode: Mode) {
     v.extreme_bg_color = p.surface_hi;
     v.faint_bg_color = p.surface_hi;
     v.selection.bg_fill = match mode {
-        Mode::Light => Color32::from_rgb(0xD8, 0xD8, 0xD8),
-        Mode::Dark  => Color32::from_rgb(0x38, 0x38, 0x38),
+        Mode::Light => Color32::from_rgba_premultiplied(0x00, 0x7A, 0xFF, 20),
+        Mode::Dark => Color32::from_rgba_premultiplied(0x0A, 0x84, 0xFF, 38),
     };
     v.selection.stroke = Stroke::new(1.0, p.accent);
     v.hyperlink_color = p.text_sec;
@@ -184,41 +188,29 @@ pub fn install(ctx: &egui::Context, mode: Mode) {
     // Typography
     use egui::TextStyle::*;
     let mut style = (*ctx.style()).clone();
-    style.text_styles.insert(Heading, FontId::new(20.0, FontFamily::Proportional));
-    style.text_styles.insert(Body,    FontId::new(13.5, FontFamily::Proportional));
-    style.text_styles.insert(Monospace, FontId::new(12.5, FontFamily::Monospace));
-    style.text_styles.insert(Button,  FontId::new(13.5, FontFamily::Proportional));
-    style.text_styles.insert(Small,   FontId::new(11.5, FontFamily::Proportional));
+    style
+        .text_styles
+        .insert(Heading, FontId::new(21.0, FontFamily::Proportional));
+    style
+        .text_styles
+        .insert(Body, FontId::new(14.0, FontFamily::Proportional));
+    style
+        .text_styles
+        .insert(Monospace, FontId::new(14.0, FontFamily::Monospace));
+    style
+        .text_styles
+        .insert(Button, FontId::new(14.0, FontFamily::Proportional));
+    style
+        .text_styles
+        .insert(Small, FontId::new(12.0, FontFamily::Proportional));
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     style.spacing.button_padding = egui::vec2(12.0, 5.0);
     style.spacing.window_margin = egui::Margin::same(14.0);
     style.spacing.interact_size.y = 30.0;
+    style.spacing.scroll.bar_width = crate::ui::SCROLLBAR_WIDTH;
+    style.spacing.scroll.floating_width = crate::ui::SCROLLBAR_WIDTH;
+    style.spacing.scroll.floating_allocated_width = 0.0;
+    style.spacing.scroll.bar_inner_margin = 4.0;
+    style.spacing.scroll.bar_outer_margin = 0.0;
     ctx.set_style(style);
-}
-
-// ─── Tag ────────────────────────────────────────────────────────────────────
-
-/// A minimal pill tag with tinted background from `color`.
-pub fn tag(ui: &mut egui::Ui, text: &str, color: Color32) -> egui::Response {
-    let pal = p();
-    // Mix the accent color into the bg at ~15% opacity for a subtle tint
-    let bg = Color32::from_rgba_premultiplied(
-        ((pal.tag_bg.r() as u16 * 220 + color.r() as u16 * 35) / 255) as u8,
-        ((pal.tag_bg.g() as u16 * 220 + color.g() as u16 * 35) / 255) as u8,
-        ((pal.tag_bg.b() as u16 * 220 + color.b() as u16 * 35) / 255) as u8,
-        255,
-    );
-    let fg = color;
-    let galley = ui.painter().layout_no_wrap(
-        text.to_owned(),
-        FontId::proportional(11.0),
-        fg,
-    );
-    let padding = egui::vec2(8.0, 3.0);
-    let size = galley.size() + padding * 2.0;
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
-    ui.painter().rect_filled(rect, Rounding::same(10.0), bg);
-    ui.painter().rect_stroke(rect, Rounding::same(10.0), Stroke::new(0.5, pal.stroke));
-    ui.painter().galley(rect.min + padding, galley, fg);
-    resp
 }

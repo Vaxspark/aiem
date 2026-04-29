@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Error, Result, paths};
 use crate::skills::{SkillIndex, SkillSource};
+use crate::{paths, Error, Result};
 
 // ─── Config ─────────────────────────────────────────────────────────────────
 
@@ -123,7 +123,11 @@ pub fn load_backup_token_file() -> Option<String> {
     let p = paths::backup_token_file().ok()?;
     let s = std::fs::read_to_string(&p).ok()?;
     let t = s.trim().to_string();
-    if t.is_empty() { None } else { Some(t) }
+    if t.is_empty() {
+        None
+    } else {
+        Some(t)
+    }
 }
 
 /// Delete the fallback token file if present.
@@ -148,7 +152,9 @@ fn now_secs() -> u64 {
 fn config_file_map() -> Result<Vec<(PathBuf, &'static str)>> {
     Ok(vec![
         (paths::skills_dir()?.join("index.json"), "skills_index.json"),
-        (paths::mcp_dir()?.join("servers.json"),  "mcp_servers.json"),
+        (paths::mcp_dir()?.join("servers.json"), "mcp_servers.json"),
+        (paths::projects_file()?, "projects.json"),
+        (paths::secrets_index_file()?, "secrets.json"),
     ])
 }
 
@@ -159,7 +165,9 @@ fn load_skill_index() -> Result<SkillIndex> {
         return Ok(SkillIndex::default());
     }
     let data = std::fs::read(&p)?;
-    Ok(serde_json::from_slice(&data)?)
+    Ok(serde_json::from_slice(crate::fs_util::strip_utf8_bom(
+        &data,
+    ))?)
 }
 
 /// Copy every `SkillSource::Local` skill directory into `dest_dir/custom_skills/<id>/`.
@@ -167,26 +175,70 @@ fn load_skill_index() -> Result<SkillIndex> {
 fn copy_local_skills_to_dir(dest_dir: &Path) -> Result<()> {
     let index = load_skill_index()?;
     let custom_dir = dest_dir.join("custom_skills");
+    if custom_dir.exists() {
+        crate::fs_util::remove_path(&custom_dir)?;
+    }
     for (id, skill) in &index.skills {
-        let SkillSource::Local { path } = &skill.source else { continue };
-        if !path.exists() { continue; }
+        let SkillSource::Local { path } = &skill.source else {
+            continue;
+        };
+        if !path.exists() {
+            continue;
+        }
         copy_dir_all(path, &custom_dir.join(id))?;
     }
     Ok(())
 }
 
+/// Copy every installed skill directory into `dest_dir/skill_contents/<id>/`.
+///
+/// `custom_skills/` is kept for backwards compatibility with older backups,
+/// but `skill_contents/` makes GitHub-sourced skills portable too.  Without
+/// this, a restored Linux server may keep Windows absolute paths in
+/// `skills_index.json` and later deploy broken project links.
+fn copy_skill_contents_to_dir(dest_dir: &Path) -> Result<()> {
+    let index = load_skill_index()?;
+    let contents_dir = dest_dir.join("skill_contents");
+    if contents_dir.exists() {
+        crate::fs_util::remove_path(&contents_dir)?;
+    }
+    for (id, skill) in &index.skills {
+        let Some(source_dir) = exportable_skill_dir(id, skill)? else {
+            continue;
+        };
+        copy_dir_all(&source_dir, &contents_dir.join(id))?;
+    }
+    Ok(())
+}
+
+fn exportable_skill_dir(id: &str, skill: &crate::skills::Skill) -> Result<Option<PathBuf>> {
+    for candidate in [skill.path.clone(), paths::skills_dir()?.join(id)] {
+        if candidate.is_dir()
+            && crate::skills::github::ensure_canonical_skill_manifest(&candidate).is_ok()
+        {
+            return Ok(Some(candidate));
+        }
+    }
+    Ok(None)
+}
+
 /// Recursively copy a directory tree from `src` to `dst`.
 fn copy_dir_all(src: &Path, dst: &Path) -> Result<()> {
     std::fs::create_dir_all(dst)?;
-    for entry in walkdir::WalkDir::new(src).follow_links(true).min_depth(1) {
+    // Do not follow symlinks — avoids pulling arbitrary paths into backups.
+    for entry in walkdir::WalkDir::new(src).follow_links(false).min_depth(1) {
         let entry = entry.map_err(|e| Error::Invalid(e.to_string()))?;
-        let rel = entry.path().strip_prefix(src)
+        let rel = entry
+            .path()
+            .strip_prefix(src)
             .map_err(|e| Error::Invalid(e.to_string()))?;
         let target = dst.join(rel);
         if entry.file_type().is_dir() {
             std::fs::create_dir_all(&target)?;
         } else {
-            if let Some(p) = target.parent() { std::fs::create_dir_all(p)?; }
+            if let Some(p) = target.parent() {
+                std::fs::create_dir_all(p)?;
+            }
             std::fs::copy(entry.path(), &target)?;
         }
     }
@@ -223,12 +275,16 @@ pub fn export_zip(dest: &Path) -> Result<()> {
         }
     }
 
-    // Local (custom) skill directories.
+    // Installed skill directories.
     let index = load_skill_index()?;
     for (id, skill) in &index.skills {
-        let SkillSource::Local { path } = &skill.source else { continue };
-        if !path.exists() { continue; }
-        add_dir_to_zip(&mut zip, path, &format!("custom_skills/{id}"), opts)?;
+        let Some(source_dir) = exportable_skill_dir(id, skill)? else {
+            continue;
+        };
+        add_dir_to_zip(&mut zip, &source_dir, &format!("skill_contents/{id}"), opts)?;
+        if matches!(skill.source, SkillSource::Local { .. }) {
+            add_dir_to_zip(&mut zip, &source_dir, &format!("custom_skills/{id}"), opts)?;
+        }
     }
 
     zip.finish().map_err(|e| Error::Invalid(e.to_string()))?;
@@ -244,7 +300,9 @@ fn add_dir_to_zip<W: std::io::Write + std::io::Seek>(
 ) -> Result<()> {
     for entry in walkdir::WalkDir::new(src_dir).follow_links(true) {
         let entry = entry.map_err(|e| Error::Invalid(e.to_string()))?;
-        let rel = entry.path().strip_prefix(src_dir)
+        let rel = entry
+            .path()
+            .strip_prefix(src_dir)
             .map_err(|e| Error::Invalid(e.to_string()))?;
         let zip_path = if rel.as_os_str().is_empty() {
             zip_prefix.to_string()
@@ -291,18 +349,35 @@ pub fn export_to_dir(dest_dir: &Path) -> Result<Vec<PathBuf>> {
         }
         for entry in std::fs::read_dir(&bundles_src)? {
             let entry = entry?;
-            if !entry.file_type()?.is_dir() { continue; }
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
             let name = entry.file_name();
             copy_dir_all(&entry.path(), &bundles_dst.join(&name))?;
             copied.push(bundles_dst.join(&name));
         }
+    }
+    copy_skill_contents_to_dir(dest_dir)?;
+    let contents_dst = dest_dir.join("skill_contents");
+    if contents_dst.exists() {
+        copied.push(contents_dst);
+    }
+    copy_local_skills_to_dir(dest_dir)?;
+    let custom_dst = dest_dir.join("custom_skills");
+    if custom_dst.exists() {
+        copied.push(custom_dst);
     }
     Ok(copied)
 }
 
 /// Restore config files from `src_dir/`, overwriting current config.
 /// Only restores files present in the snapshot; returns restored paths.
+///
+/// Automatically creates a safety snapshot of the current state before
+/// overwriting, so the user can revert if the restore goes wrong.
+/// The pre-restore snapshot path (if any) is logged via `tracing::info`.
 pub fn import_from_dir(src_dir: &Path) -> Result<Vec<PathBuf>> {
+    auto_safety_snapshot("pre-restore");
     let mut restored = Vec::new();
     for (dst, name) in config_file_map()? {
         let src = src_dir.join(name);
@@ -321,7 +396,9 @@ pub fn import_from_dir(src_dir: &Path) -> Result<Vec<PathBuf>> {
         std::fs::create_dir_all(&bundles_dst)?;
         for entry in std::fs::read_dir(&bundles_src)? {
             let entry = entry?;
-            if !entry.file_type()?.is_dir() { continue; }
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
             let name = entry.file_name();
             let dst = bundles_dst.join(&name);
             if dst.exists() {
@@ -331,7 +408,92 @@ pub fn import_from_dir(src_dir: &Path) -> Result<Vec<PathBuf>> {
             restored.push(dst);
         }
     }
+    restored.extend(restore_skill_contents_from_dir(src_dir)?);
+    normalize_restored_skill_index()?;
     Ok(restored)
+}
+
+/// Restore installed skill directories from modern `skill_contents/<id>/` and
+/// legacy `custom_skills/<id>/` backups.
+fn restore_skill_contents_from_dir(src_dir: &Path) -> Result<Vec<PathBuf>> {
+    let source_roots = [
+        src_dir.join("skill_contents"),
+        src_dir.join("custom_skills"),
+    ];
+    if !source_roots.iter().any(|p| p.is_dir()) {
+        return Ok(Vec::new());
+    }
+
+    let mut restored = Vec::new();
+    for source_root in source_roots.iter().filter(|p| p.is_dir()) {
+        for entry in std::fs::read_dir(source_root)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() {
+                continue;
+            }
+            let id = entry.file_name().to_string_lossy().to_string();
+            let dst = paths::skills_dir()?.join(&id);
+            if dst.exists() {
+                crate::fs_util::remove_path(&dst)?;
+            }
+            copy_dir_all(&entry.path(), &dst)?;
+            restored.push(dst);
+        }
+    }
+    Ok(restored)
+}
+
+fn normalize_restored_skill_index() -> Result<()> {
+    let index_path = paths::skills_dir()?.join("index.json");
+    if !index_path.exists() {
+        return Ok(());
+    }
+    let mut reg = crate::skills::SkillRegistry::load()?;
+    let ids: Vec<String> = reg.list().map(|skill| skill.id.clone()).collect();
+    for id in ids {
+        let Some(skill) = reg.get_mut(&id) else {
+            continue;
+        };
+        let local = paths::skills_dir()?.join(&id);
+        if local.is_dir() && crate::skills::github::ensure_canonical_skill_manifest(&local).is_ok()
+        {
+            skill.path = local.clone();
+            if matches!(skill.source, SkillSource::Local { .. }) {
+                skill.source = SkillSource::Local { path: local };
+            }
+        } else if is_foreign_windows_path(&skill.path)
+            && skill.path.is_dir()
+            && crate::skills::github::ensure_canonical_skill_manifest(&skill.path).is_ok()
+        {
+            if local.exists() || crate::fs_util::is_link(&local) {
+                crate::fs_util::remove_path(&local)?;
+            }
+            copy_dir_all(&skill.path, &local)?;
+            skill.path = local.clone();
+            if matches!(skill.source, SkillSource::Local { .. }) {
+                skill.source = SkillSource::Local { path: local };
+            }
+        } else if !skill.path.exists() {
+            skill.path = local;
+        }
+        for roots in skill.deployments.values_mut() {
+            roots.retain(|root| root == "~" || Path::new(root).is_dir());
+        }
+        skill.deployments.retain(|_, roots| !roots.is_empty());
+    }
+    reg.save()?;
+    Ok(())
+}
+
+#[cfg(unix)]
+fn is_foreign_windows_path(path: &Path) -> bool {
+    let s = path.to_string_lossy();
+    s.contains(":\\") || s.contains(":/")
+}
+
+#[cfg(not(unix))]
+fn is_foreign_windows_path(_path: &Path) -> bool {
+    false
 }
 
 /// Create a timestamped local snapshot in `~/.aiem/snapshots/<unix_ts>/`.
@@ -423,8 +585,14 @@ pub fn push_github(repo_url: &str, token: Option<&str>) -> Result<()> {
     } else {
         git_run(&work_dir, &["remote", "add", "origin", &auth_url], None)?;
     }
+    let branch = remote_default_branch(&work_dir, proxy).unwrap_or_else(|| "main".to_string());
+    let push_ref = format!("HEAD:{branch}");
 
-    let _ = git_run(&work_dir, &["config", "user.email", "aiem-backup@localhost"], None);
+    let _ = git_run(
+        &work_dir,
+        &["config", "user.email", "aiem-backup@localhost"],
+        None,
+    );
     let _ = git_run(&work_dir, &["config", "user.name", "aiem"], None);
 
     git_run(&work_dir, &["add", "."], None)?;
@@ -439,26 +607,43 @@ pub fn push_github(repo_url: &str, token: Option<&str>) -> Result<()> {
 
     // Try to fetch remote history and rebase local commits on top so we
     // don't lose commits made from another machine (e.g. the remote server).
-    let fetch_ok = git_run(&work_dir, &["fetch", "origin", "main"], proxy).is_ok();
+    let fetch_ok = git_run_network(&work_dir, &["fetch", "origin", &branch], proxy).is_ok();
     if fetch_ok {
-        // Check if origin/main exists (may be an empty / brand-new repo).
-        let has_remote = git_run(&work_dir, &["rev-parse", "--verify", "origin/main"], None).is_ok();
+        // Check if the remote branch exists (may be an empty / brand-new repo).
+        let remote_ref = format!("origin/{branch}");
+        let has_remote = git_run(&work_dir, &["rev-parse", "--verify", &remote_ref], None).is_ok();
         if has_remote {
-            let rebase_ok = git_run(&work_dir, &["rebase", "origin/main"], None).is_ok();
+            let rebase_ok = git_run(&work_dir, &["rebase", &remote_ref], None).is_ok();
             if !rebase_ok {
                 // Rebase conflict — abort and fall back to force.
                 let _ = git_run(&work_dir, &["rebase", "--abort"], None);
-                git_run(&work_dir, &["push", "--set-upstream", "origin", "main", "--force"], proxy)?;
+                git_run_network(
+                    &work_dir,
+                    &["push", "--set-upstream", "origin", &push_ref, "--force"],
+                    proxy,
+                )?;
             } else {
-                git_run(&work_dir, &["push", "--set-upstream", "origin", "main"], proxy)?;
+                git_run_network(
+                    &work_dir,
+                    &["push", "--set-upstream", "origin", &push_ref],
+                    proxy,
+                )?;
             }
         } else {
             // First push to an empty repo.
-            git_run(&work_dir, &["push", "--set-upstream", "origin", "main"], proxy)?;
+            git_run_network(
+                &work_dir,
+                &["push", "--set-upstream", "origin", &push_ref],
+                proxy,
+            )?;
         }
     } else {
         // No network / repo doesn't exist yet — force push.
-        git_run(&work_dir, &["push", "--set-upstream", "origin", "main", "--force"], proxy)?;
+        git_run_network(
+            &work_dir,
+            &["push", "--set-upstream", "origin", &push_ref, "--force"],
+            proxy,
+        )?;
     }
 
     let ts = now_secs();
@@ -486,14 +671,18 @@ pub fn pull_github(repo_url: &str, token: Option<&str>) -> Result<()> {
         std::fs::create_dir_all(&work_dir)?;
         git_init_main(&work_dir)?;
         git_run(&work_dir, &["remote", "add", "origin", &auth_url], None)?;
-        git_run(&work_dir, &["fetch", "origin", "main"], proxy)?;
-        git_run(&work_dir, &["reset", "--hard", "origin/main"], None)?;
     } else {
         git_run(&work_dir, &["remote", "set-url", "origin", &auth_url], None)?;
-        git_run(&work_dir, &["fetch", "origin", "main"], proxy)?;
-        git_run(&work_dir, &["reset", "--hard", "origin/main"], None)?;
     }
+    let branch = remote_default_branch(&work_dir, proxy).unwrap_or_else(|| "main".to_string());
+    git_run_network(&work_dir, &["fetch", "origin", &branch], proxy)?;
+    git_run(
+        &work_dir,
+        &["reset", "--hard", &format!("origin/{branch}")],
+        None,
+    )?;
 
+    // import_from_dir already takes a safety snapshot internally.
     import_from_dir(&work_dir)?;
     Ok(())
 }
@@ -509,10 +698,8 @@ pub fn check_connectivity(repo_url: &str, token: Option<&str>) -> Result<()> {
     let proxy = proxy_owned.as_deref().filter(|s| !s.is_empty());
 
     // Use a temp dir so we don't need an initialised repo.
-    let tmp = tempfile::tempdir()
-        .map_err(|e| Error::Invalid(format!("temp dir: {e}")))?;
-    git_run(tmp.path(), &["ls-remote", "--heads", &auth_url], proxy)
-        .map(|_| ())
+    let tmp = tempfile::tempdir().map_err(|e| Error::Invalid(format!("temp dir: {e}")))?;
+    git_run_network(tmp.path(), &["ls-remote", "--heads", &auth_url], proxy).map(|_| ())
 }
 
 // ─── Internal helpers ─────────────────────────────────────────────────────────
@@ -548,6 +735,43 @@ fn git_init_main(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+fn remote_default_branch(dir: &Path, proxy: Option<&str>) -> Option<String> {
+    let out = git_run_network(dir, &["ls-remote", "--symref", "origin", "HEAD"], proxy).ok()?;
+    for line in out.lines() {
+        let Some(rest) = line.strip_prefix("ref: refs/heads/") else {
+            continue;
+        };
+        let branch = rest.split_whitespace().next()?.trim();
+        if !branch.is_empty() {
+            return Some(branch.to_string());
+        }
+    }
+    None
+}
+
+/// Run a git network command through the configured proxy, but retry directly
+/// when the proxy is stale/unreachable. This is important for headless servers
+/// whose WebUI config can outlive a local proxy daemon.
+fn git_run_network(dir: &Path, args: &[&str], proxy: Option<&str>) -> Result<String> {
+    let Some(proxy) = proxy.filter(|s| !s.is_empty()) else {
+        return git_run(dir, args, None);
+    };
+    match git_run(dir, args, Some(proxy)) {
+        Ok(out) => Ok(out),
+        Err(proxy_err) => {
+            tracing::warn!(
+                error = %proxy_err,
+                "git command through configured proxy failed; retrying without proxy"
+            );
+            git_run(dir, args, None).map_err(|direct_err| {
+                Error::Invalid(format!(
+                    "{direct_err} (also failed via proxy {proxy}: {proxy_err})"
+                ))
+            })
+        }
+    }
+}
+
 /// Run a git subcommand, optionally routing through an HTTP proxy.
 /// When `proxy` is `Some(p)` the `HTTPS_PROXY` and `HTTP_PROXY` env vars are
 /// set on the child process so that both HTTPS and HTTP remotes are proxied.
@@ -560,7 +784,8 @@ fn git_run(dir: &Path, args: &[&str], proxy: Option<&str>) -> Result<String> {
         cmd.env("https_proxy", p);
         cmd.env("http_proxy", p);
     }
-    let out = cmd.output()
+    let out = cmd
+        .output()
         .map_err(|e| Error::Invalid(format!("cannot run git: {e}")))?;
     if !out.status.success() {
         let msg = String::from_utf8_lossy(&out.stderr);
@@ -577,6 +802,22 @@ fn hostname() -> String {
     std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .unwrap_or_else(|_| "unknown".into())
+}
+
+/// Best-effort: snapshot current config before a destructive operation.
+/// Logs and swallows errors — callers should not fail if this does.
+fn auto_safety_snapshot(label: &str) {
+    let ts = now_secs();
+    let dir = match paths::snapshots_dir() {
+        Ok(d) => d.join(format!("{ts}-{label}")),
+        Err(_) => return,
+    };
+    match export_to_dir(&dir) {
+        Ok(files) if !files.is_empty() => {
+            tracing::info!(snapshot = %dir.display(), "created safety snapshot before restore");
+        }
+        _ => {}
+    }
 }
 
 fn update_last_ts(ts: u64) -> Result<()> {
@@ -612,12 +853,246 @@ pub fn time_ago(ts: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::mcp::model::{McpServer, McpTransport};
+    use crate::mcp::McpRegistry;
+    use crate::projects::{Project, ProjectStore};
+    use crate::skills::{Skill, SkillRegistry, SkillSource};
+    use std::collections::BTreeMap;
 
     #[test]
     fn auto_interval_secs() {
         assert_eq!(AutoInterval::Never.as_secs(), None);
         assert_eq!(AutoInterval::Daily.as_secs(), Some(86_400));
         assert_eq!(AutoInterval::Weekly.as_secs(), Some(604_800));
+    }
+
+    #[test]
+    fn export_import_restores_projects_and_local_skills_portably() {
+        let _guard = crate::test_support::lock();
+        let home1 = tempfile::tempdir().unwrap();
+        std::env::set_var("AIEM_HOME", home1.path());
+
+        let source_skill = home1.path().join("source-skill");
+        std::fs::create_dir_all(&source_skill).unwrap();
+        std::fs::write(source_skill.join("SKILL.md"), "# Local Skill").unwrap();
+
+        let mut skills = SkillRegistry::load().unwrap();
+        skills.upsert(Skill {
+            id: "local__demo".into(),
+            name: "demo".into(),
+            source: SkillSource::Local {
+                path: source_skill.clone(),
+            },
+            version: "imported".into(),
+            path: source_skill.clone(),
+            description: None,
+            installed_at: None,
+            deployments: BTreeMap::new(),
+            file_hashes: BTreeMap::new(),
+        });
+        skills.save().unwrap();
+
+        let project_dir = tempfile::tempdir().unwrap();
+        let mut projects = ProjectStore::load().unwrap();
+        projects.upsert(Project {
+            name: "demo-project".into(),
+            path: project_dir.path().to_string_lossy().to_string(),
+            ides: vec!["cursor".into()],
+            skills: vec!["local__demo".into()],
+            mcp_servers: vec![],
+        });
+        projects.save().unwrap();
+
+        let export_dir = tempfile::tempdir().unwrap();
+        export_to_dir(export_dir.path()).unwrap();
+        assert!(export_dir.path().join("projects.json").is_file());
+        assert!(export_dir
+            .path()
+            .join("custom_skills/local__demo/SKILL.md")
+            .is_file());
+        assert!(export_dir
+            .path()
+            .join("skill_contents/local__demo/SKILL.md")
+            .is_file());
+
+        let home2 = tempfile::tempdir().unwrap();
+        std::env::set_var("AIEM_HOME", home2.path());
+        import_from_dir(export_dir.path()).unwrap();
+
+        let restored = SkillRegistry::load().unwrap();
+        let skill = restored.get("local__demo").unwrap();
+        let expected_path = home2.path().join("skills/local__demo");
+        assert_eq!(skill.path, expected_path);
+        assert_eq!(
+            skill.source,
+            SkillSource::Local {
+                path: expected_path.clone()
+            }
+        );
+        assert!(expected_path.join("SKILL.md").is_file());
+
+        let restored_projects = ProjectStore::load().unwrap();
+        assert!(restored_projects
+            .list()
+            .any(|p| p.name == "demo-project" && p.skills == vec!["local__demo".to_string()]));
+    }
+
+    #[test]
+    fn export_handles_bom_prefixed_skill_index() {
+        let _guard = crate::test_support::lock();
+        let home = tempfile::tempdir().unwrap();
+        std::env::set_var("AIEM_HOME", home.path());
+
+        let source_skill = home.path().join("source-skill");
+        std::fs::create_dir_all(&source_skill).unwrap();
+        std::fs::write(source_skill.join("SKILL.md"), "# BOM Skill").unwrap();
+
+        let mut skills = SkillRegistry::load().unwrap();
+        skills.upsert(Skill {
+            id: "local__bom".into(),
+            name: "bom".into(),
+            source: SkillSource::Local {
+                path: source_skill.clone(),
+            },
+            version: "local".into(),
+            path: source_skill,
+            description: None,
+            installed_at: None,
+            deployments: BTreeMap::new(),
+            file_hashes: BTreeMap::new(),
+        });
+        skills.save().unwrap();
+
+        let index_path = paths::skills_dir().unwrap().join("index.json");
+        let mut with_bom = vec![0xEF, 0xBB, 0xBF];
+        with_bom.extend(std::fs::read(&index_path).unwrap());
+        std::fs::write(&index_path, with_bom).unwrap();
+
+        let export_dir = tempfile::tempdir().unwrap();
+        export_to_dir(export_dir.path()).unwrap();
+        assert!(export_dir
+            .path()
+            .join("skill_contents/local__bom/SKILL.md")
+            .is_file());
+    }
+
+    #[test]
+    fn export_import_restores_mcp_bundle_scripts() {
+        let _guard = crate::test_support::lock();
+        let home1 = tempfile::tempdir().unwrap();
+        std::env::set_var("AIEM_HOME", home1.path());
+
+        let bundle_dir = paths::mcp_bundles_dir().unwrap().join("demo-mcp");
+        std::fs::create_dir_all(&bundle_dir).unwrap();
+        std::fs::write(bundle_dir.join("server.py"), "print('ok')\n").unwrap();
+
+        let mut reg = McpRegistry::load().unwrap();
+        reg.upsert(McpServer {
+            name: "demo-mcp".into(),
+            transport: McpTransport::Stdio {
+                command: "python".into(),
+                args: vec!["server.py".into()],
+                env: BTreeMap::new(),
+                cwd: Some("{BUNDLE}".into()),
+                bundle: Some("demo-mcp".into()),
+            },
+            targets: vec!["codex".into()],
+            description: None,
+            tags: vec![],
+            disabled: false,
+            source: None,
+            runtime: None,
+            auth_mode: Default::default(),
+        });
+        reg.save().unwrap();
+
+        let export_dir = tempfile::tempdir().unwrap();
+        export_to_dir(export_dir.path()).unwrap();
+        assert!(export_dir
+            .path()
+            .join("mcp_bundles/demo-mcp/server.py")
+            .is_file());
+
+        let home2 = tempfile::tempdir().unwrap();
+        std::env::set_var("AIEM_HOME", home2.path());
+        import_from_dir(export_dir.path()).unwrap();
+
+        assert!(home2
+            .path()
+            .join("mcp/bundles/demo-mcp/server.py")
+            .is_file());
+        let restored = McpRegistry::load().unwrap();
+        let server = restored.get("demo-mcp").unwrap();
+        assert!(matches!(
+            &server.transport,
+            McpTransport::Stdio {
+                bundle: Some(bundle),
+                ..
+            } if bundle == "demo-mcp"
+        ));
+    }
+
+    #[test]
+    fn import_reanchors_github_skill_paths_and_prunes_foreign_deployments() {
+        let _guard = crate::test_support::lock();
+        let home1 = tempfile::tempdir().unwrap();
+        std::env::set_var("AIEM_HOME", home1.path());
+
+        let skill_dir = home1.path().join("skills").join("owner__repo__portable");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(skill_dir.join("SKILL.md"), "# Portable").unwrap();
+
+        let mut deployments = BTreeMap::new();
+        deployments.insert(
+            "claude-code".to_string(),
+            vec![
+                r"C:\definitely-not-existing-aiem-root".to_string(),
+                home1.path().to_string_lossy().to_string(),
+            ],
+        );
+
+        let mut skills = SkillRegistry::load().unwrap();
+        skills.upsert(Skill {
+            id: "owner__repo__portable".into(),
+            name: "portable".into(),
+            source: SkillSource::GitHub {
+                owner: "owner".into(),
+                repo: "repo".into(),
+                r#ref: None,
+                subdir: Some("skills/portable".into()),
+            },
+            version: "old".into(),
+            path: PathBuf::from(r"C:\Users\buaa\.aiem\skills\owner__repo__portable"),
+            description: None,
+            installed_at: None,
+            deployments,
+            file_hashes: BTreeMap::new(),
+        });
+        skills.save().unwrap();
+
+        let export_dir = tempfile::tempdir().unwrap();
+        export_to_dir(export_dir.path()).unwrap();
+        assert!(export_dir
+            .path()
+            .join("skill_contents/owner__repo__portable/SKILL.md")
+            .is_file());
+
+        let home2 = tempfile::tempdir().unwrap();
+        std::env::set_var("AIEM_HOME", home2.path());
+        import_from_dir(export_dir.path()).unwrap();
+
+        let restored = SkillRegistry::load().unwrap();
+        let skill = restored.get("owner__repo__portable").unwrap();
+        let expected = home2.path().join("skills/owner__repo__portable");
+        assert_eq!(skill.path, expected);
+        assert!(expected.join("SKILL.md").is_file());
+        assert!(skill
+            .deployments
+            .get("claude-code")
+            .map(|roots| roots
+                .iter()
+                .all(|root| !root.contains("definitely-not-existing-aiem-root")))
+            .unwrap_or(true));
     }
 
     #[test]
@@ -628,7 +1103,8 @@ mod tests {
 
     #[test]
     fn build_auth_url_replaces_existing_auth() {
-        let url = build_auth_url("https://oldtoken@github.com/user/repo", Some("newtoken")).unwrap();
+        let url =
+            build_auth_url("https://oldtoken@github.com/user/repo", Some("newtoken")).unwrap();
         assert_eq!(url, "https://newtoken@github.com/user/repo");
     }
 
@@ -644,13 +1120,20 @@ mod tests {
 
     #[test]
     fn is_due_never() {
-        let cfg = BackupConfig { auto_interval: AutoInterval::Never, ..Default::default() };
+        let cfg = BackupConfig {
+            auto_interval: AutoInterval::Never,
+            ..Default::default()
+        };
         assert!(!cfg.is_due());
     }
 
     #[test]
     fn is_due_daily_no_last() {
-        let cfg = BackupConfig { auto_interval: AutoInterval::Daily, last_backup_ts: None, ..Default::default() };
+        let cfg = BackupConfig {
+            auto_interval: AutoInterval::Daily,
+            last_backup_ts: None,
+            ..Default::default()
+        };
         assert!(cfg.is_due());
     }
 

@@ -1,11 +1,9 @@
+pub mod discover;
 pub mod events;
+pub mod ides;
 pub mod layout;
-pub mod skills;
 pub mod mcp;
+pub mod projects;
 pub mod secrets;
 pub mod settings;
-pub mod ides;
-pub mod profiles;
-pub mod projects;
-pub mod discover;
-pub mod store;
+pub mod skills;

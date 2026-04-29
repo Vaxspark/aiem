@@ -3,8 +3,10 @@ use std::path::PathBuf;
 use aiem_core::discover::{self, FoundMcpServer, FoundSkill};
 use eframe::egui::{self, RichText};
 
-use crate::app::{card, page_header, primary_button, App};
+use crate::app::App;
+use crate::i18n;
 use crate::theme;
+use crate::ui;
 
 #[derive(Default)]
 pub struct State {
@@ -31,8 +33,14 @@ impl State {
 
         self.skills = match skills_result {
             Ok(Ok(s)) => s,
-            Ok(Err(e)) => { self.scan_error = Some(format!("Skills scan error: {e}")); Vec::new() }
-            Err(_) => { self.scan_error = Some("Skills scan crashed (panic)".into()); Vec::new() }
+            Ok(Err(e)) => {
+                self.scan_error = Some(format!("Skills scan error: {e}"));
+                Vec::new()
+            }
+            Err(_) => {
+                self.scan_error = Some("Skills scan crashed (panic)".into());
+                Vec::new()
+            }
         };
         self.mcp = match mcp_result {
             Ok(Ok(m)) => m,
@@ -66,43 +74,39 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
         return;
     }
 
-    page_header(
+    ui::page_toolbar(
         ui,
-        "Discover",
-        "Find existing skills & MCP servers on this machine not yet managed by aiem",
+        i18n::t("discover.title"),
+        i18n::t("discover.subtitle"),
         |ui| {
-            if primary_button(ui, "Scan").clicked() {
+            if ui::primary_button(ui, i18n::t("discover.scan")).clicked() {
                 app.discover_state.scan();
             }
         },
     );
 
-    // ── Extra scan paths ─────────────────────────────────────────────
-    card(ui, |ui| {
-        ui.label(RichText::new("Scan locations").strong().color(theme::TEXT()));
+    ui::settings_group(ui, i18n::t("discover.scan_locations"), |ui| {
+        let pal = theme::p();
         ui.label(
-            RichText::new("Home IDE dirs + ~/.agents/skills are always scanned. Add project roots below:")
-                .small()
-                .color(theme::MUTED()),
+            RichText::new(i18n::t("discover.scan_hint"))
+                .size(12.0)
+                .color(pal.text_sec),
         );
         ui.add_space(4.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Path:").color(theme::TEXT()));
-            let resp = ui.add(
+            ui.add(
                 egui::TextEdit::singleline(&mut app.discover_state.extra_path)
                     .hint_text("e.g. E:\\code\\myproject")
-                    .text_color(theme::TEXT())
                     .desired_width((ui.available_width() - 200.0).max(160.0)),
             );
-            let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            if ui.button("Browse…").clicked() {
+            if ui::secondary_button(ui, i18n::t("common.browse")).clicked() {
                 if let Some(folder) = rfd::FileDialog::new().pick_folder() {
                     if !app.discover_state.extra_dirs.contains(&folder) {
                         app.discover_state.extra_dirs.push(folder);
                     }
                 }
             }
-            if (ui.button("Add").clicked() || enter)
+            if ui::secondary_button(ui, i18n::t("common.add")).clicked()
                 && !app.discover_state.extra_path.trim().is_empty()
             {
                 let raw = app.discover_state.extra_path.trim().to_string();
@@ -119,10 +123,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             let mut to_remove = None;
             for (idx, p) in app.discover_state.extra_dirs.iter().enumerate() {
                 ui.horizontal(|ui| {
-                    if ui.small_button("✕").clicked() {
+                    if ui.small_button("x").clicked() {
                         to_remove = Some(idx);
                     }
-                    ui.label(RichText::new(p.to_string_lossy()).monospace().small().color(theme::TEXT()));
+                    ui.label(
+                        RichText::new(p.to_string_lossy())
+                            .size(12.0)
+                            .monospace()
+                            .color(pal.text),
+                    );
                 });
             }
             if let Some(idx) = to_remove {
@@ -130,22 +139,15 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
             }
         }
     });
-    ui.add_space(10.0);
 
-    // ── Scan errors ──────────────────────────────────────────────────
     if let Some(err) = &app.discover_state.scan_error {
-        card(ui, |ui| {
-            ui.label(RichText::new(format!("⚠ {err}")).color(theme::DANGER()));
+        ui::settings_group(ui, "", |ui| {
+            ui.label(RichText::new(err).color(theme::DANGER()));
         });
-        ui.add_space(10.0);
     }
 
     if !app.discover_state.scanned {
-        empty_state(
-            ui,
-            "Ready to scan",
-            "Click \"Scan\" to search your IDE configs and skills directories.",
-        );
+        ui::empty_state(ui, i18n::t("discover.ready"), i18n::t("discover.ready_sub"));
         return;
     }
 
@@ -160,144 +162,143 @@ pub fn show(ui: &mut egui::Ui, app: &mut App) {
     }
 
     if n_skills == 0 && n_mcp == 0 {
-        empty_state(
+        ui::empty_state(
             ui,
-            "Nothing found",
-            "All skills and MCP servers are already managed by aiem.",
+            i18n::t("discover.nothing"),
+            i18n::t("discover.nothing_sub"),
         );
         return;
     }
 
-    // ── Import actions bar ───────────────────────────────────────────
-    card(ui, |ui| {
+    ui::settings_group(ui, "", |ui| {
+        let sk_sel = app
+            .discover_state
+            .skill_checked
+            .iter()
+            .filter(|&&c| c)
+            .count();
+        let mc_sel = app
+            .discover_state
+            .mcp_checked
+            .iter()
+            .filter(|&&c| c)
+            .count();
         ui.horizontal(|ui| {
-            let sk_sel = app.discover_state.skill_checked.iter().filter(|&&c| c).count();
-            let mc_sel = app.discover_state.mcp_checked.iter().filter(|&&c| c).count();
             ui.label(
-                RichText::new(format!("Selected: {} skill(s), {} server(s)", sk_sel, mc_sel))
-                    .color(theme::TEXT()),
+                RichText::new(format!(
+                    "{}: {} skill(s), {} server(s)",
+                    i18n::t("discover.selected"),
+                    sk_sel,
+                    mc_sel
+                ))
+                .size(13.0)
+                .color(theme::p().text),
             );
-            ui.checkbox(&mut app.discover_state.copy_skills, "Copy to ~/.aiem");
+            ui.checkbox(
+                &mut app.discover_state.copy_skills,
+                i18n::t("discover.copy_to_aiem"),
+            );
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if primary_button(ui, "Import selected").clicked() {
+                if ui::primary_button(ui, i18n::t("discover.import")).clicked() {
                     do_import(app);
                     return;
                 }
-                if ui.button("All").clicked() {
+                if ui::small_action(ui, i18n::t("common.all")).clicked() {
                     app.discover_state.skill_checked.fill(true);
                     app.discover_state.mcp_checked.fill(true);
                 }
-                if ui.button("None").clicked() {
+                if ui::small_action(ui, i18n::t("common.none")).clicked() {
                     app.discover_state.skill_checked.fill(false);
                     app.discover_state.mcp_checked.fill(false);
                 }
             });
         });
     });
-    ui.add_space(10.0);
 
     if app.discover_state.just_imported {
         return;
     }
 
-    // ── Scrollable results ───────────────────────────────────────────
-    egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-        if n_skills > 0 {
-            ui.label(
-                RichText::new(format!("Skills ({n_skills})"))
-                    .heading()
-                    .strong()
-                    .color(theme::TEXT()),
-            );
-            ui.add_space(6.0);
-            for i in 0..n_skills {
-                if i >= app.discover_state.skills.len()
-                    || i >= app.discover_state.skill_checked.len()
-                {
-                    break;
-                }
-                let dir_name = app.discover_state.skills[i].dir_name.clone();
-                let ide_id = app.discover_state.skills[i].ide_id.clone();
-                let is_link = app.discover_state.skills[i].is_link;
-                let path_str = app.discover_state.skills[i].path.to_string_lossy().to_string();
-
-                card(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut app.discover_state.skill_checked[i], "");
-                        ui.vertical(|ui| {
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            let pal = theme::p();
+            if n_skills > 0 {
+                ui::settings_group(
+                    ui,
+                    &format!("{} ({})", i18n::t("tab.skills"), n_skills),
+                    |ui| {
+                        for i in 0..n_skills {
+                            if i >= app.discover_state.skills.len()
+                                || i >= app.discover_state.skill_checked.len()
+                            {
+                                break;
+                            }
                             ui.horizontal(|ui| {
-                                ui.label(RichText::new(&dir_name).strong().color(theme::TEXT()));
-                                theme::tag(ui, &ide_id, theme::ACCENT());
-                                if is_link {
-                                    theme::tag(ui, "link", theme::MUTED());
+                                ui.checkbox(&mut app.discover_state.skill_checked[i], "");
+                                ui.label(
+                                    RichText::new(&app.discover_state.skills[i].dir_name)
+                                        .size(13.0)
+                                        .color(pal.text),
+                                );
+                                ui::pill(ui, &app.discover_state.skills[i].ide_id, theme::ACCENT());
+                                if app.discover_state.skills[i].is_link {
+                                    ui::pill(ui, "link", pal.text_sec);
                                 }
                             });
                             ui.label(
-                                RichText::new(&path_str).monospace().small().color(theme::MUTED()),
+                                RichText::new(
+                                    app.discover_state.skills[i]
+                                        .path
+                                        .to_string_lossy()
+                                        .to_string(),
+                                )
+                                .size(11.0)
+                                .monospace()
+                                .color(pal.text_sec),
                             );
-                        });
-                    });
-                });
-                ui.add_space(4.0);
+                            if i < n_skills - 1 {
+                                ui.separator();
+                            }
+                        }
+                    },
+                );
             }
-            ui.add_space(10.0);
-        }
 
-        if n_mcp > 0 {
-            ui.label(
-                RichText::new(format!("MCP Servers ({n_mcp})"))
-                    .heading()
-                    .strong()
-                    .color(theme::TEXT()),
-            );
-            ui.add_space(6.0);
-            for i in 0..n_mcp {
-                if i >= app.discover_state.mcp.len()
-                    || i >= app.discover_state.mcp_checked.len()
-                {
-                    break;
-                }
-                let name = app.discover_state.mcp[i].server.name.clone();
-                let source_ide = app.discover_state.mcp[i].source_ide.clone();
-                let targets: Vec<String> = app.discover_state.mcp[i]
-                    .server
-                    .targets
-                    .iter()
-                    .filter(|t| *t != &source_ide)
-                    .cloned()
-                    .collect();
-                let transport_desc = match &app.discover_state.mcp[i].server.transport {
-                    aiem_core::mcp::McpTransport::Stdio { command, args, .. } => {
-                        format!("stdio: {} {}", command, args.join(" "))
+            if n_mcp > 0 {
+                ui::settings_group(ui, &format!("MCP ({})", n_mcp), |ui| {
+                    for i in 0..n_mcp {
+                        if i >= app.discover_state.mcp.len()
+                            || i >= app.discover_state.mcp_checked.len()
+                        {
+                            break;
+                        }
+                        let srv = &app.discover_state.mcp[i];
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut app.discover_state.mcp_checked[i], "");
+                            ui.label(RichText::new(&srv.server.name).size(13.0).color(pal.text));
+                            ui::pill(ui, &srv.source_ide, theme::SUCCESS());
+                        });
+                        let desc = match &srv.server.transport {
+                            aiem_core::mcp::McpTransport::Stdio { command, args, .. } => {
+                                format!("{} {}", command, args.join(" "))
+                            }
+                            aiem_core::mcp::McpTransport::Http { url, .. }
+                            | aiem_core::mcp::McpTransport::Sse { url, .. } => url.clone(),
+                        };
+                        ui.label(
+                            RichText::new(&desc)
+                                .size(11.0)
+                                .monospace()
+                                .color(pal.text_sec),
+                        );
+                        if i < n_mcp - 1 {
+                            ui.separator();
+                        }
                     }
-                    aiem_core::mcp::McpTransport::Http { url, .. } => format!("http: {url}"),
-                    aiem_core::mcp::McpTransport::Sse { url, .. } => format!("sse: {url}"),
-                };
-
-                card(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.checkbox(&mut app.discover_state.mcp_checked[i], "");
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(&name).strong().color(theme::TEXT()));
-                                theme::tag(ui, &source_ide, theme::SUCCESS());
-                                for t in &targets {
-                                    theme::tag(ui, t, theme::SUCCESS());
-                                }
-                            });
-                            ui.label(
-                                RichText::new(&transport_desc)
-                                    .monospace()
-                                    .small()
-                                    .color(theme::MUTED()),
-                            );
-                        });
-                    });
                 });
-                ui.add_space(4.0);
             }
-        }
-    });
+        });
 }
 
 fn do_import(app: &mut App) {
@@ -306,7 +307,7 @@ fn do_import(app: &mut App) {
     let mut imported_mcp = 0;
     let mut errors: Vec<String> = Vec::new();
 
-    let skills_to_import: Vec<discover::FoundSkill> = app
+    let skills_to_import: Vec<FoundSkill> = app
         .discover_state
         .skill_checked
         .iter()
@@ -314,8 +315,7 @@ fn do_import(app: &mut App) {
         .filter(|(i, &c)| c && *i < app.discover_state.skills.len())
         .map(|(i, _)| app.discover_state.skills[i].clone())
         .collect();
-
-    let mcp_to_import: Vec<discover::FoundMcpServer> = app
+    let mcp_to_import: Vec<FoundMcpServer> = app
         .discover_state
         .mcp_checked
         .iter()
@@ -334,11 +334,9 @@ fn do_import(app: &mut App) {
             Err(_) => errors.push(format!("skill {}: internal error", f.dir_name)),
         }
     }
-
     for f in &mcp_to_import {
-        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            discover::import_mcp(f)
-        }));
+        let result =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| discover::import_mcp(f)));
         match result {
             Ok(Ok(())) => imported_mcp += 1,
             Ok(Err(e)) => errors.push(format!("mcp {}: {e}", f.server.name)),
@@ -349,7 +347,6 @@ fn do_import(app: &mut App) {
     for e in &errors {
         app.toast_error(e.clone());
     }
-
     if imported_skills > 0 || imported_mcp > 0 {
         app.toast_info(format!(
             "Imported {} skill(s), {} server(s)",
@@ -358,19 +355,8 @@ fn do_import(app: &mut App) {
         app.reload_skills();
         app.reload_mcp();
     } else if errors.is_empty() {
-        app.toast_info("Nothing selected to import");
+        app.toast_info(i18n::t("discover.nothing_selected"));
     }
-
     app.discover_state.scan();
     app.discover_state.just_imported = true;
-}
-
-fn empty_state(ui: &mut egui::Ui, title: &str, sub: &str) {
-    ui.add_space(60.0);
-    ui.vertical_centered(|ui| {
-        ui.label(RichText::new("---").size(32.0).color(theme::MUTED()));
-        ui.add_space(4.0);
-        ui.label(RichText::new(title).strong().size(18.0).color(theme::TEXT()));
-        ui.label(RichText::new(sub).color(theme::MUTED()));
-    });
 }

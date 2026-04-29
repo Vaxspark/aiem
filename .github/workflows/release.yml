@@ -136,6 +136,7 @@ jobs:
           foreach ($b in @('aiem.exe','aiem-gui.exe')) {
             Copy-Item "target/${{ matrix.target }}/release/$b" "dist/$pkg/"
           }
+          Copy-Item pic/aiem.ico "dist/$pkg/aiem.ico"
           Copy-Item README.md,LICENSE "dist/$pkg/"
           if (Test-Path docs) { Copy-Item -Recurse docs "dist/$pkg/docs" }
           Compress-Archive -Path "dist/$pkg/*" -DestinationPath "dist/$pkg.zip"

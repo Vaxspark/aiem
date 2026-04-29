@@ -1,333 +1,170 @@
-# aiem — AI Extension Manager
+# aiem
 
-> Unified skills & MCP server management across all your AI-powered IDEs.
+AI Extension Manager。aiem 用来统一管理 AI 编程 IDE 的 Skills、MCP 服务、项目配置、密钥和备份数据，同时提供命令行、桌面端和 Web UI 三种入口。
 
-[![Release](https://img.shields.io/github/v/release/Vaxspark/aiem)](https://github.com/Vaxspark/aiem/releases)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.75%2B-orange.svg)](https://www.rust-lang.org/)
+![Skills 页面](pic/skillspage.png)
 
----
+## 当前版本
 
-[English](#english) | [中文](#中文)
+当前初始版本标记为 `v0.1.0`。
 
----
+## 包含内容
 
-## English
+- `aiem`：命令行工具，同时内置 Web UI 服务。
+- `aiem-gui`：基于 egui 的原生桌面端。
+- Web UI：通过 `aiem serve` 启动的浏览器管理界面。
 
-### What is aiem?
+## 支持的 IDE
 
-**aiem** is a cross-platform command-line (and GUI) tool that lets you manage:
+- Claude Code
+- Codex
+- Cursor
+- Copilot
+- Windsurf
+- Trae
+- Qoder
+- Kiro
 
-- **AI Skills** — prompt packs / instruction files deployed into IDE config directories
-- **MCP Servers** — Model Context Protocol server registrations synced across IDEs
-- **Secrets** — API keys and tokens stored in the OS keyring, injected into MCP env vars at runtime
-- **Profiles** — named subsets of skills/MCPs you can switch between instantly
-- **Backup & Restore** — local snapshots and GitHub-backed configuration backup
+## 主要功能
 
-It targets **Cursor**, **Windsurf**, **VS Code**, **Zed**, and other IDEs that support `.cursor/rules`, `.windsurf/rules`, or `mcp.json`-style configuration.
+- 从 GitHub 或本地目录安装 Skill。
+- 将 Skill 部署到全局或指定项目。
+- 添加、部署、移除、启用、禁用和打包 MCP 服务。
+- 按 IDE 和项目范围部署 MCP 服务。
+- 创建项目配置，将 IDE、Skills 和 MCP 服务组合到同一个工作区。
+- 使用系统密钥环保存密钥，并通过 `${secret:NAME}` 引用。
+- 扫描本地 IDE 配置，发现并导入已有资源。
+- 创建本地快照，或同步到 GitHub 备份仓库。
+- 在桌面端和 Web UI 中切换中文/英文界面。
 
-A lightweight **Web UI** (`aiem serve`) is included for headless remote management over SSH port forwarding — no Node.js, no public port.
+## 页面预览
 
----
+![Skills 页面](pic/skillspage.png)
 
-### Installation
+![发现页面](pic/discoverpage.png)
 
-#### One-line install (recommended)
+## 安装
 
-**Linux / macOS:**
-```sh
-curl -fsSL https://raw.githubusercontent.com/Vaxspark/aiem/main/install.sh | sh
-```
+### Windows PowerShell
 
-**Windows (PowerShell):**
 ```powershell
 irm https://raw.githubusercontent.com/Vaxspark/aiem/main/install.ps1 | iex
 ```
 
-The script downloads the latest binary, places it in `~/.local/bin` (Linux/macOS) or `%LOCALAPPDATA%\aiem` (Windows), and adds it to your `PATH` automatically.
+安装脚本会把程序放到：
 
-#### Manual download
+```text
+%LOCALAPPDATA%\aiem
+```
 
-If you prefer, grab the binary directly from the [Releases page](https://github.com/Vaxspark/aiem/releases):
+脚本会同时把安装目录加入用户 `PATH`，如果存在桌面端程序，也会创建开始菜单快捷方式。
 
-| Platform | Binary |
-|---|---|
-| Windows x86_64 | `aiem-windows-x86_64.zip` |
-| Linux x86_64 (musl, static) | `aiem-linux-x86_64-musl.tar.gz` |
+## 从源码构建
 
-#### Build from source
-
-```bash
-git clone https://github.com/Vaxspark/aiem.git
+```powershell
+git clone git@github.com:Vaxspark/aiem.git
 cd aiem
-cargo build --release -p aiem-cli
-# binary at target/release/aiem (or aiem.exe on Windows)
+cargo build --release -p aiem-cli --features web
+cargo build --release -p aiem-gui
 ```
 
-For the Web UI feature:
+构建产物：
 
-```bash
-cargo build --release --features web -p aiem-cli
+```text
+target\release\aiem.exe
+target\release\aiem-gui.exe
 ```
 
----
+## 快速开始
 
-### Quick Start
-
-```bash
-# 1. Initialise the ~/.aiem home directory
+```powershell
 aiem init
-
-# 2. Add a skill from a GitHub repo
-aiem skill add my-skill --url https://github.com/you/skills#main
-
-# 3. Deploy skill to Cursor (writes .cursor/rules/)
-aiem skill deploy my-skill cursor
-
-# 4. Register an MCP server
-aiem mcp add my-server --type stdio --cmd uvx --arg MCP-Server-Fetch
-
-# 5. Sync MCP servers to all supported IDEs
-aiem mcp sync
-
-# 6. Manage secrets (stored in OS keyring)
-aiem secret set MY_API_KEY
-```
-
----
-
-### CLI Reference
-
-```
-aiem <COMMAND>
-
-Commands:
-  init       Initialise the aiem home directory (~/.aiem)
-  ide        List supported IDEs
-  skill      Add, remove, deploy/undeploy, and list AI skills
-  mcp        Add, remove, sync, deploy/undeploy MCP servers
-  secret     Store and retrieve secrets from the OS keyring
-  profile    Create and switch between named skill/MCP profiles
-  discover   Scan this machine for existing skills & MCP configs
-  backup     Local snapshots and GitHub backup/restore
-  serve      Start the Web UI (requires --features web build)
-```
-
-#### `skill` subcommands
-
-```
-aiem skill add <NAME> --url <GITHUB_URL>   # register from GitHub
-aiem skill add <NAME> --path <DIR>          # register from local directory
-aiem skill deploy <NAME> <IDE>              # write skill files into IDE config
-aiem skill undeploy <NAME> <IDE>            # remove skill files from IDE config
-aiem skill sync                             # re-deploy all skills to all IDEs
-aiem skill list                             # list registered skills
-aiem skill remove <NAME>                    # remove skill registration
-```
-
-#### `mcp` subcommands
-
-```
-aiem mcp add <NAME> --type stdio --cmd <CMD> [--arg <ARG>]…
-aiem mcp add <NAME> --type sse  --url <URL>
-aiem mcp sync                               # write to all registered IDE configs
-aiem mcp deploy <NAME> --project <PATH>     # attach server to one project
-aiem mcp undeploy <NAME> --project <PATH>   # detach server from one project
+aiem ide
+aiem skill list
 aiem mcp list
-aiem mcp remove <NAME>
-aiem mcp supported                          # list IDE targets
+aiem serve --open
 ```
 
-#### `backup` subcommands
+添加并部署一个 Skill：
 
-```
-aiem backup snapshot                        # local timestamped snapshot
-aiem backup export <DEST_DIR>               # zip export to explicit path
-aiem backup import <SRC_DIR>                # restore from snapshot or export
-aiem backup push [--repo <URL>] [--token <PAT>]  # commit & push to GitHub
-aiem backup pull [--repo <URL>] [--token <PAT>]  # pull & restore from GitHub
-aiem backup status                          # show config and last backup time
-```
-
----
-
-### Web UI
-
-Start the server locally:
-
-```bash
-aiem serve --open          # opens http://127.0.0.1:8787 in your browser
-```
-
-For headless servers (SSH port forwarding):
-
-```bash
-# On the server:
-aiem serve                 # binds to 127.0.0.1:8787
-
-# On your laptop:
-ssh -L 8787:localhost:8787 user@yourserver
-# then open http://localhost:8787
-```
-
-#### Systemd user service
-
-```bash
-cp aiem-user.service ~/.config/systemd/user/aiem.service
-systemctl --user daemon-reload
-systemctl --user enable --now aiem
-```
-
----
-
-### GUI
-
-A native desktop GUI is available as a separate binary (`aiem-gui`). It provides the same skill/MCP management as the CLI with a graphical interface built on [egui](https://github.com/emilk/egui).
-
----
-
-## 中文
-
-### aiem 是什么？
-
-**aiem**（AI Extension Manager）是一款跨平台命令行工具（附带 GUI），用于统一管理：
-
-- **AI Skills（提示包）** — 部署到 IDE 配置目录的提示文件 / 指令集
-- **MCP 服务器** — 跨 IDE 同步的 Model Context Protocol 服务器注册信息
-- **Secrets（密钥）** — 保存在系统钥匙串中的 API Key，在 MCP 运行时自动注入
-- **Profiles（配置集）** — 可随时切换的命名 skill/MCP 子集
-- **备份与还原** — 本地快照 + GitHub 远程备份
-
-支持的 IDE 包括 **Cursor**、**Windsurf**、**VS Code**、**Zed** 等。
-
-同时内置轻量级 **Web UI**（`aiem serve`），可通过 SSH 端口转发远程管理，无需 Node.js，无需公网端口。
-
----
-
-### 安装
-
-#### 一键安装（推荐）
-
-**Linux / macOS：**
-```sh
-curl -fsSL https://raw.githubusercontent.com/Vaxspark/aiem/main/install.sh | sh
-```
-
-**Windows（PowerShell）：**
 ```powershell
-irm https://raw.githubusercontent.com/Vaxspark/aiem/main/install.ps1 | iex
+aiem skill add my-skill --url https://github.com/owner/repo
+aiem skill deploy my-skill codex
 ```
 
-脚本会自动下载最新版二进制并配置好 PATH，运行完即可直接使用 `aiem` 命令。
+添加并同步一个 MCP 服务：
 
-#### 手动下载
-
-也可以从 [Releases 页面](https://github.com/Vaxspark/aiem/releases) 直接下载：
-
-| 平台 | 文件 |
-|---|---|
-| Windows x86_64 | `aiem-windows-x86_64.zip` |
-| Linux x86_64（musl 静态链接） | `aiem-linux-x86_64-musl.tar.gz` |
-
-#### 源码编译
-
-```bash
-git clone https://github.com/Vaxspark/aiem.git
-cd aiem
-cargo build --release -p aiem-cli
-```
-
-如需 Web UI：
-
-```bash
-cargo build --release --features web -p aiem-cli
-```
-
----
-
-### 快速上手
-
-```bash
-# 初始化 ~/.aiem 目录
-aiem init
-
-# 从 GitHub 添加 skill
-aiem skill add my-skill --url https://github.com/you/skills#main
-
-# 部署到 Cursor
-aiem skill deploy my-skill cursor
-
-# 注册 MCP 服务器
-aiem mcp add my-server --type stdio --cmd uvx --arg MCP-Server-Fetch
-
-# 同步到所有已注册 IDE
+```powershell
+aiem mcp add fetch --type stdio --cmd uvx --arg mcp-server-fetch
 aiem mcp sync
-
-# 存储密钥（保存在系统钥匙串）
-aiem secret set MY_API_KEY
 ```
 
----
+启动 Web UI：
 
-### 主要命令速览
-
-| 命令 | 说明 |
-|---|---|
-| `aiem init` | 初始化 `~/.aiem` 目录 |
-| `aiem skill add/deploy/sync` | 管理 AI skills |
-| `aiem mcp add/sync/deploy` | 管理 MCP 服务器 |
-| `aiem secret set/get` | 管理密钥 |
-| `aiem profile create/switch` | 管理配置集 |
-| `aiem discover` | 自动发现本机已有配置 |
-| `aiem backup snapshot/push/pull` | 备份与还原 |
-| `aiem serve` | 启动 Web UI |
-
----
-
-### Web UI 远程访问
-
-```bash
-# 服务器端
-aiem serve          # 监听 127.0.0.1:8787
-
-# 本机
-ssh -L 8787:localhost:8787 user@yourserver
-# 然后打开 http://localhost:8787
+```powershell
+aiem serve --host 127.0.0.1 --port 8787 --open
 ```
 
-#### Systemd 用户服务
+启动桌面端：
 
-```bash
-cp aiem-user.service ~/.config/systemd/user/aiem.service
-systemctl --user daemon-reload
-systemctl --user enable --now aiem
+```powershell
+aiem-gui
 ```
 
----
+## 项目配置
 
-### 备份功能
+项目配置用于描述某个工作目录应该启用哪些 IDE、哪些 Skills 和哪些 MCP 服务。
 
-```bash
-# 本地快照
+- `仅保存`：只更新项目记录。
+- `保存并部署`：保存记录，并立即把选中的 Skills/MCP 服务部署到项目。
+- `同步`：按照已经保存的项目记录重新同步到工作区。
+
+## 密钥
+
+密钥值保存在系统密钥环中，不会提交到仓库。MCP 配置可以通过下面的形式引用密钥：
+
+```text
+${secret:NAME}
+```
+
+## 备份
+
+```powershell
 aiem backup snapshot
-
-# 导出为 zip
-aiem backup export ~/my-backup.zip
-
-# 推送到 GitHub 私有仓库
-aiem backup push --repo https://github.com/you/aiem-backup --token <PAT>
-
-# 从 GitHub 恢复
-aiem backup pull --repo https://github.com/you/aiem-backup
-
-# 查看备份状态
-aiem backup status
+aiem backup export <DEST_DIR>
+aiem backup import <SRC_DIR>
+aiem backup push --repo https://github.com/owner/backup-repo
+aiem backup pull --repo https://github.com/owner/backup-repo
 ```
 
-> **提示**：GitHub token 也可通过 `GITHUB_TOKEN` 环境变量或 Web UI 的 Settings 页面设置，无需每次在命令行中传入。
+GitHub token 可以通过 `GITHUB_TOKEN`、设置页或系统密钥环提供。
 
----
+## 隐私和本地文件
 
-## License
+仓库会忽略本地运行文件和编译产物，例如 `.agents/`、`.codex-preview/`、`.cursor/`、`.tmp-*`、`.env`、`target/` 和 `dist/`。上传 GitHub 前不要使用 `git add -f` 强制加入这些本地文件。
 
-MIT — see [LICENSE](LICENSE).
+## 开发
+
+格式化和检查：
+
+```powershell
+cargo fmt
+cargo check --workspace
+```
+
+发布构建：
+
+```powershell
+cargo build --release -p aiem-cli --features web -p aiem-gui
+```
+
+本地运行：
+
+```powershell
+cargo run -p aiem-cli --features web -- serve --port 8787 --open
+cargo run -p aiem-gui
+```
+
+## English Summary
+
+aiem is an AI Extension Manager for Skills, MCP servers, project profiles, secrets, and backups across multiple AI coding IDEs. It includes a CLI, a native desktop GUI, and a browser-based Web UI.

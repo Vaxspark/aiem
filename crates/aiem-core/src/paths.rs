@@ -22,46 +22,82 @@ pub fn home() -> Result<PathBuf> {
     Ok(home.join(".aiem"))
 }
 
-pub fn skills_dir() -> Result<PathBuf> { Ok(home()?.join("skills")) }
-pub fn mcp_dir() -> Result<PathBuf> { Ok(home()?.join("mcp")) }
-pub fn backups_dir() -> Result<PathBuf> { Ok(home()?.join("backups")) }
-pub fn cache_dir() -> Result<PathBuf> { Ok(home()?.join("cache")) }
+pub fn skills_dir() -> Result<PathBuf> {
+    Ok(home()?.join("skills"))
+}
+pub fn mcp_dir() -> Result<PathBuf> {
+    Ok(home()?.join("mcp"))
+}
+pub fn backups_dir() -> Result<PathBuf> {
+    Ok(home()?.join("backups"))
+}
+pub fn cache_dir() -> Result<PathBuf> {
+    Ok(home()?.join("cache"))
+}
 
-pub fn mcp_servers_file() -> Result<PathBuf> { Ok(mcp_dir()?.join("servers.json")) }
-pub fn secrets_index_file() -> Result<PathBuf> { Ok(home()?.join("secrets.json")) }
-pub fn profiles_file() -> Result<PathBuf> { Ok(home()?.join("profiles.json")) }
-pub fn projects_file() -> Result<PathBuf> { Ok(home()?.join("projects.json")) }
+pub fn mcp_servers_file() -> Result<PathBuf> {
+    Ok(mcp_dir()?.join("servers.json"))
+}
+pub fn secrets_index_file() -> Result<PathBuf> {
+    Ok(home()?.join("secrets.json"))
+}
+pub fn profiles_file() -> Result<PathBuf> {
+    Ok(home()?.join("profiles.json"))
+}
+pub fn projects_file() -> Result<PathBuf> {
+    Ok(home()?.join("projects.json"))
+}
 
 /// Timestamped local snapshots: `~/.aiem/snapshots/`
-pub fn snapshots_dir() -> Result<PathBuf> { Ok(home()?.join("snapshots")) }
+pub fn snapshots_dir() -> Result<PathBuf> {
+    Ok(home()?.join("snapshots"))
+}
 
 /// Git working tree used for GitHub push/pull backups: `~/.aiem/backup-git/`
-pub fn backup_git_dir() -> Result<PathBuf> { Ok(home()?.join("backup-git")) }
+pub fn backup_git_dir() -> Result<PathBuf> {
+    Ok(home()?.join("backup-git"))
+}
 
 /// Backup preferences file: `~/.aiem/backup.json`
-pub fn backup_config_file() -> Result<PathBuf> { Ok(home()?.join("backup.json")) }
+pub fn backup_config_file() -> Result<PathBuf> {
+    Ok(home()?.join("backup.json"))
+}
 
 /// Plain-text fallback slot for the GitHub backup token, used when the OS
 /// keyring cannot persist the secret (e.g. systemd user services on Linux,
 /// which run in their own non-interactive session keyring).  Written with
 /// `0600` perms on Unix.  Primary storage remains the OS keyring.
-pub fn backup_token_file() -> Result<PathBuf> { Ok(home()?.join(".backup-token")) }
+pub fn backup_token_file() -> Result<PathBuf> {
+    Ok(home()?.join(".backup-token"))
+}
 
 /// Recycle bin: `~/.aiem/trash/`.  When a skill or MCP bundle is removed,
 /// its on-disk content is moved here (under a timestamped subdirectory)
 /// instead of being deleted outright, so the user can recover from an
 /// accidental deletion.  Never synced to git backup.
-pub fn trash_dir() -> Result<PathBuf> { Ok(home()?.join("trash")) }
+pub fn trash_dir() -> Result<PathBuf> {
+    Ok(home()?.join("trash"))
+}
 
 /// Source storage for MCP "bundles" — local script folders that an MCP
 /// server depends on.  Layout: `~/.aiem/mcp/bundles/<bundle_name>/`.
 /// Synced to the git backup.  At deploy time, a bundle is copied into the
 /// target project as `<project>/.aiem-mcp/<bundle_name>/`.
-pub fn mcp_bundles_dir() -> Result<PathBuf> { Ok(mcp_dir()?.join("bundles")) }
+pub fn mcp_bundles_dir() -> Result<PathBuf> {
+    Ok(mcp_dir()?.join("bundles"))
+}
 
 /// Create all standard dirs if missing.
 pub fn ensure_layout() -> Result<()> {
-    for p in [home()?, skills_dir()?, mcp_dir()?, backups_dir()?, cache_dir()?, snapshots_dir()?, mcp_bundles_dir()?] {
+    for p in [
+        home()?,
+        skills_dir()?,
+        mcp_dir()?,
+        backups_dir()?,
+        cache_dir()?,
+        snapshots_dir()?,
+        mcp_bundles_dir()?,
+    ] {
         std::fs::create_dir_all(&p)?;
     }
     Ok(())

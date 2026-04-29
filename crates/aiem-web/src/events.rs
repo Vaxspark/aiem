@@ -26,7 +26,6 @@ pub enum ResourceKind {
     Skills,
     Mcp,
     Secrets,
-    Profiles,
     Projects,
 }
 
@@ -36,7 +35,6 @@ impl ResourceKind {
             Self::Skills => "skills",
             Self::Mcp => "mcp",
             Self::Secrets => "secrets",
-            Self::Profiles => "profiles",
             Self::Projects => "projects",
         }
     }

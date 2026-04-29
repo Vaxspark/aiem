@@ -1,10 +1,9 @@
+pub mod backup;
+pub mod discover;
 pub mod ide;
 pub mod mcp;
-pub mod skill;
 pub mod secret;
-pub mod profile;
-pub mod discover;
-pub mod backup;
+pub mod skill;
 
 use aiem_core::paths;
 

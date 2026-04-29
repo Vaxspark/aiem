@@ -9,9 +9,24 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::fs_util::atomic_write;
+use crate::fs_util::{atomic_write, strip_utf8_bom};
 use crate::ide;
 use crate::{paths, Error, Result};
+
+/// Normalize a project path for use as a registry key.
+///
+/// Canonicalizes the path when it exists on disk, then converts to a
+/// forward-slash string. This ensures the same directory is never registered
+/// twice with different representations (e.g. `C:\Users\foo\proj` vs
+/// `C:/Users/foo/proj` vs `c:\users\foo\proj`).
+pub fn normalize_project_path(raw: &str) -> String {
+    let p = PathBuf::from(raw);
+    let resolved = p.canonicalize().unwrap_or(p);
+    let s = resolved.to_string_lossy();
+    // Strip Windows \\?\ prefix
+    let stripped = s.strip_prefix(r"\\?\").unwrap_or(&s);
+    stripped.replace('\\', "/")
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Project {
@@ -42,14 +57,17 @@ pub struct ProjectStore {
 }
 
 impl ProjectStore {
-    pub fn file() -> Result<PathBuf> { paths::projects_file() }
+    pub fn file() -> Result<PathBuf> {
+        paths::projects_file()
+    }
 
     pub fn load() -> Result<Self> {
         let p = Self::file()?;
-        if !p.exists() { return Ok(Self::default()); }
+        if !p.exists() {
+            return Ok(Self::default());
+        }
         let bytes = std::fs::read(&p)?;
-        let data = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) { &bytes[3..] } else { &bytes };
-        let inner: ProjectsFile = serde_json::from_slice(data)?;
+        let inner: ProjectsFile = serde_json::from_slice(strip_utf8_bom(&bytes))?;
         Ok(Self { inner })
     }
 
@@ -60,19 +78,39 @@ impl ProjectStore {
         Ok(())
     }
 
-    pub fn list(&self) -> impl Iterator<Item = &Project> { self.inner.projects.values() }
-    pub fn get(&self, path: &str) -> Option<&Project> { self.inner.projects.get(path) }
-    pub fn get_mut(&mut self, path: &str) -> Option<&mut Project> { self.inner.projects.get_mut(path) }
+    pub fn list(&self) -> impl Iterator<Item = &Project> {
+        self.inner.projects.values()
+    }
 
-    pub fn upsert(&mut self, p: Project) {
+    pub fn get(&self, path: &str) -> Option<&Project> {
+        self.inner.projects.get(path).or_else(|| {
+            let n = normalize_project_path(path);
+            self.inner.projects.get(&n)
+        })
+    }
+
+    pub fn get_mut(&mut self, path: &str) -> Option<&mut Project> {
+        if self.inner.projects.contains_key(path) {
+            return self.inner.projects.get_mut(path);
+        }
+        let n = normalize_project_path(path);
+        self.inner.projects.get_mut(&n)
+    }
+
+    pub fn upsert(&mut self, mut p: Project) {
+        p.path = normalize_project_path(&p.path);
         self.inner.projects.insert(p.path.clone(), p);
     }
 
     pub fn remove(&mut self, path: &str) -> Result<()> {
-        if self.inner.projects.remove(path).is_none() {
-            return Err(Error::NotFound(format!("project `{path}` not found")));
+        if self.inner.projects.remove(path).is_some() {
+            return Ok(());
         }
-        Ok(())
+        let n = normalize_project_path(path);
+        if self.inner.projects.remove(&n).is_some() {
+            return Ok(());
+        }
+        Err(Error::NotFound(format!("project `{path}` not found")))
     }
 }
 
@@ -110,4 +148,88 @@ pub fn scan_project_skills(project_path: &Path) -> Vec<(String, String)> {
         }
     }
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::MutexGuard;
+
+    struct Isolated {
+        _dir: tempfile::TempDir,
+        _guard: MutexGuard<'static, ()>,
+    }
+
+    fn isolate() -> Isolated {
+        let guard = crate::test_support::lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("AIEM_HOME", dir.path());
+        Isolated {
+            _dir: dir,
+            _guard: guard,
+        }
+    }
+
+    #[test]
+    fn roundtrip() {
+        let _h = isolate();
+        let mut store = ProjectStore::load().unwrap();
+        store.upsert(Project {
+            name: "demo".into(),
+            path: "/tmp/demo".into(),
+            ides: vec![],
+            skills: vec![],
+            mcp_servers: vec!["s1".into()],
+        });
+        store.save().unwrap();
+        let store2 = ProjectStore::load().unwrap();
+        let p = store2.get("/tmp/demo").unwrap();
+        assert_eq!(p.mcp_servers, vec!["s1".to_string()]);
+    }
+
+    #[test]
+    fn load_with_bom() {
+        let _h = isolate();
+        let p = ProjectStore::file().unwrap();
+        crate::paths::ensure_layout().unwrap();
+        let mut data = vec![0xEF, 0xBB, 0xBF];
+        data.extend_from_slice(b"{\"projects\":{}}");
+        std::fs::write(&p, &data).unwrap();
+        let store = ProjectStore::load().unwrap();
+        assert_eq!(store.list().count(), 0);
+    }
+
+    #[test]
+    fn remove_missing_errors() {
+        let _h = isolate();
+        let mut store = ProjectStore::load().unwrap();
+        assert!(store.remove("/no/such").is_err());
+    }
+
+    #[test]
+    fn normalize_forward_and_back_slashes() {
+        let a = normalize_project_path("C:/Users/test/project");
+        let b = normalize_project_path("C:\\Users\\test\\project");
+        assert_eq!(
+            a, b,
+            "forward-slash and back-slash should normalize to the same key"
+        );
+    }
+
+    #[test]
+    fn get_finds_by_normalized_key() {
+        let _h = isolate();
+        let mut store = ProjectStore::load().unwrap();
+        store.upsert(Project {
+            name: "x".into(),
+            path: "C:/Users/test/proj".into(),
+            ides: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+        });
+        store.save().unwrap();
+        let store2 = ProjectStore::load().unwrap();
+        // Look up with backslash — should still find it.
+        assert!(store2.get("C:\\Users\\test\\proj").is_some());
+    }
 }

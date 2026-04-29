@@ -39,6 +39,48 @@ pub enum McpTransport {
     },
 }
 
+/// Detected runtime for a bundle-backed MCP server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum McpRuntime {
+    Python,
+    Node,
+    Other,
+}
+
+/// How the server authenticates with external services.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum McpAuthMode {
+    /// No auth needed or fully configured via env/headers.
+    None,
+    /// Tokens stored in aiem Vault, expanded at deploy time.
+    SecretRef,
+    /// Server requires external login (browser OAuth, etc.).
+    External,
+    /// Secrets are referenced but missing from the Vault.
+    MissingSecret,
+}
+
+impl Default for McpAuthMode {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+/// Where this server definition came from.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct McpSource {
+    pub owner: String,
+    pub repo: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub r#ref: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subdir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+}
+
 /// A single MCP server managed by aiem.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct McpServer {
@@ -57,6 +99,16 @@ pub struct McpServer {
     /// without losing its definition).
     #[serde(default)]
     pub disabled: bool,
+
+    /// GitHub origin (set when imported via `import-github`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<McpSource>,
+    /// Detected runtime of the bundle entry point.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<McpRuntime>,
+    /// Authentication status.
+    #[serde(default)]
+    pub auth_mode: McpAuthMode,
 }
 
 /// On-disk structure for `~/.aiem/mcp/servers.json`.

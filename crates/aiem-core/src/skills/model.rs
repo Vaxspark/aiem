@@ -22,6 +22,43 @@ pub enum SkillSource {
     Local { path: PathBuf },
 }
 
+/// When the user pastes a URL with a third-party prefix before `https://github.com/...`,
+/// set `GITHUB_MIRROR` / `GITHUB_API_MIRROR` for [`crate::skills::github`] downloads,
+/// and return the slice starting at `https://github.com/` (or `http://github.com/`).
+/// Call this **before** [`SkillSource::parse_github`]; parsing itself has no side effects.
+pub fn apply_github_proxy_env(input: &str) -> &str {
+    let s = input.trim();
+    if let Some(pos) = s.find("https://github.com/") {
+        if pos > 0 {
+            let proxy_base = s[..pos].trim_end_matches('/');
+            std::env::set_var(
+                "GITHUB_MIRROR",
+                format!("{proxy_base}/https://codeload.github.com"),
+            );
+            std::env::set_var(
+                "GITHUB_API_MIRROR",
+                format!("{proxy_base}/https://api.github.com"),
+            );
+        }
+        return &s[pos..];
+    }
+    if let Some(pos) = s.find("http://github.com/") {
+        if pos > 0 {
+            let proxy_base = s[..pos].trim_end_matches('/');
+            std::env::set_var(
+                "GITHUB_MIRROR",
+                format!("{proxy_base}/https://codeload.github.com"),
+            );
+            std::env::set_var(
+                "GITHUB_API_MIRROR",
+                format!("{proxy_base}/https://api.github.com"),
+            );
+        }
+        return &s[pos..];
+    }
+    s
+}
+
 impl SkillSource {
     /// Parse shorthand strings like:
     ///   "owner/repo"
@@ -32,29 +69,6 @@ impl SkillSource {
     ///   "https://github.com/owner/repo"
     pub fn parse_github(s: &str) -> Option<Self> {
         let s = s.trim();
-
-        // Strip common GitHub proxy prefixes (e.g. https://gh-proxy.org/https://github.com/...)
-        let s = if let Some(pos) = s.find("https://github.com/") {
-            // If there's a proxy prefix before the real GitHub URL, extract the proxy
-            // and set it as GITHUB_MIRROR env var for downloads
-            if pos > 0 {
-                let proxy_base = &s[..pos];
-                let proxy_base = proxy_base.trim_end_matches('/');
-                // Set env vars so fetch_github uses this proxy
-                std::env::set_var("GITHUB_MIRROR", format!("{proxy_base}/https://codeload.github.com"));
-                std::env::set_var("GITHUB_API_MIRROR", format!("{proxy_base}/https://api.github.com"));
-            }
-            &s[pos..]
-        } else if let Some(pos) = s.find("http://github.com/") {
-            if pos > 0 {
-                let proxy_base = &s[..pos].trim_end_matches('/');
-                std::env::set_var("GITHUB_MIRROR", format!("{proxy_base}/https://codeload.github.com"));
-                std::env::set_var("GITHUB_API_MIRROR", format!("{proxy_base}/https://api.github.com"));
-            }
-            &s[pos..]
-        } else {
-            s
-        };
 
         let s = s
             .strip_prefix("github:")
@@ -75,8 +89,15 @@ impl SkillSource {
             } else {
                 None
             };
-            if owner.is_empty() || repo.is_empty() { return None; }
-            return Some(SkillSource::GitHub { owner, repo, r#ref, subdir });
+            if owner.is_empty() || repo.is_empty() {
+                return None;
+            }
+            return Some(SkillSource::GitHub {
+                owner,
+                repo,
+                r#ref,
+                subdir,
+            });
         }
         // Also handle /blob/<ref>/... pattern
         if parts.len() >= 4 && parts[2] == "blob" {
@@ -88,8 +109,15 @@ impl SkillSource {
             } else {
                 None
             };
-            if owner.is_empty() || repo.is_empty() { return None; }
-            return Some(SkillSource::GitHub { owner, repo, r#ref, subdir });
+            if owner.is_empty() || repo.is_empty() {
+                return None;
+            }
+            return Some(SkillSource::GitHub {
+                owner,
+                repo,
+                r#ref,
+                subdir,
+            });
         }
 
         let (body, r#ref) = match s.rsplit_once('@') {
@@ -114,7 +142,12 @@ impl SkillSource {
 
     pub fn canonical_id(&self) -> String {
         match self {
-            SkillSource::GitHub { owner, repo, subdir, .. } => {
+            SkillSource::GitHub {
+                owner,
+                repo,
+                subdir,
+                ..
+            } => {
                 let mut id = format!("{owner}__{repo}");
                 if let Some(sd) = subdir {
                     // Use only the last path component for the id
@@ -161,4 +194,110 @@ pub struct Skill {
 pub struct SkillIndex {
     #[serde(default)]
     pub skills: BTreeMap<String, Skill>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_simple_owner_repo() {
+        let s = SkillSource::parse_github("alice/my-skill").unwrap();
+        assert_eq!(
+            s,
+            SkillSource::GitHub {
+                owner: "alice".into(),
+                repo: "my-skill".into(),
+                r#ref: None,
+                subdir: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_with_ref_and_subdir() {
+        let s = SkillSource::parse_github("alice/repo//sub@v2").unwrap();
+        assert_eq!(
+            s,
+            SkillSource::GitHub {
+                owner: "alice".into(),
+                repo: "repo".into(),
+                r#ref: Some("v2".into()),
+                subdir: Some("sub".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_full_github_url() {
+        let s = SkillSource::parse_github("https://github.com/bob/tools").unwrap();
+        assert_eq!(
+            s,
+            SkillSource::GitHub {
+                owner: "bob".into(),
+                repo: "tools".into(),
+                r#ref: None,
+                subdir: None,
+            }
+        );
+    }
+
+    #[test]
+    fn parse_github_tree_url() {
+        let s = SkillSource::parse_github("https://github.com/bob/tools/tree/main/sub").unwrap();
+        assert_eq!(
+            s,
+            SkillSource::GitHub {
+                owner: "bob".into(),
+                repo: "tools".into(),
+                r#ref: Some("main".into()),
+                subdir: Some("sub".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn parse_rejects_empty_parts() {
+        assert!(SkillSource::parse_github("").is_none());
+        assert!(SkillSource::parse_github("/repo").is_none());
+    }
+
+    #[test]
+    fn parse_does_not_set_env() {
+        let before_mirror = std::env::var("GITHUB_MIRROR").ok();
+        let before_api = std::env::var("GITHUB_API_MIRROR").ok();
+        let _ = SkillSource::parse_github("https://proxy.example.com/https://github.com/o/r");
+        assert_eq!(std::env::var("GITHUB_MIRROR").ok(), before_mirror);
+        assert_eq!(std::env::var("GITHUB_API_MIRROR").ok(), before_api);
+    }
+
+    #[test]
+    fn apply_proxy_env_sets_vars() {
+        let _ = apply_github_proxy_env("https://proxy.example.com/https://github.com/o/r");
+        assert!(std::env::var("GITHUB_MIRROR")
+            .unwrap()
+            .contains("proxy.example.com"));
+    }
+
+    #[test]
+    fn canonical_id_no_subdir() {
+        let s = SkillSource::GitHub {
+            owner: "a".into(),
+            repo: "b".into(),
+            r#ref: None,
+            subdir: None,
+        };
+        assert_eq!(s.canonical_id(), "a__b");
+    }
+
+    #[test]
+    fn canonical_id_with_subdir() {
+        let s = SkillSource::GitHub {
+            owner: "a".into(),
+            repo: "b".into(),
+            r#ref: None,
+            subdir: Some("x/y".into()),
+        };
+        assert_eq!(s.canonical_id(), "a__b__y");
+    }
 }

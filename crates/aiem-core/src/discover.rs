@@ -7,7 +7,7 @@
 //! MCP discovery: read each supported IDE's native config and collect servers
 //! not already present in aiem's MCP registry.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::ide;
@@ -68,7 +68,7 @@ pub fn discover_skills() -> Result<Vec<FoundSkill>> {
 }
 
 pub fn discover_skills_with_extras(extra_dirs: &[PathBuf]) -> Result<Vec<FoundSkill>> {
-    let reg = SkillRegistry::load().unwrap_or_default();
+    let reg = SkillRegistry::load()?;
     let home = dirs::home_dir().unwrap_or_default();
 
     // Collect managed paths and IDs for deduplication.
@@ -86,7 +86,7 @@ pub fn discover_skills_with_extras(extra_dirs: &[PathBuf]) -> Result<Vec<FoundSk
     }
 
     let mut found = Vec::new();
-    let mut seen_paths: Vec<PathBuf> = Vec::new(); // deduplicate across sources
+    let mut seen_paths: HashSet<PathBuf> = HashSet::new(); // normalized paths, dedupe across sources
 
     // --- 1. Scan ALL IDE skills dirs under $HOME (both user-scope and project-scope) ---
     for ide in ide::IDES {
@@ -120,7 +120,11 @@ pub fn discover_skills_with_extras(extra_dirs: &[PathBuf]) -> Result<Vec<FoundSk
     for dir in extra_dirs {
         // If the path itself looks like a skills directory (ends with "skills"),
         // scan it directly as a flat skills folder.
-        if dir.file_name().map(|n| n.to_string_lossy().contains("skills")).unwrap_or(false) {
+        if dir
+            .file_name()
+            .map(|n| n.to_string_lossy().contains("skills"))
+            .unwrap_or(false)
+        {
             scan_dir_for_skills(
                 dir,
                 "custom",
@@ -148,7 +152,9 @@ pub fn discover_skills_with_extras(extra_dirs: &[PathBuf]) -> Result<Vec<FoundSk
         if let Ok(entries) = std::fs::read_dir(dir) {
             for entry in entries.flatten() {
                 let project_dir = entry.path();
-                if !project_dir.is_dir() { continue; }
+                if !project_dir.is_dir() {
+                    continue;
+                }
                 for ide in ide::IDES {
                     let skills_dir = project_dir.join(ide.skills_dir);
                     scan_dir_for_skills(
@@ -175,7 +181,7 @@ fn scan_dir_for_skills(
     managed_paths: &[PathBuf],
     managed_ids: &[String],
     deployed_links: &[PathBuf],
-    seen_paths: &mut Vec<PathBuf>,
+    seen_paths: &mut HashSet<PathBuf>,
     found: &mut Vec<FoundSkill>,
 ) {
     let entries = match std::fs::read_dir(dir) {
@@ -189,33 +195,52 @@ fn scan_dir_for_skills(
             Ok(m) => m.is_dir(),
             Err(_) => continue,
         };
-        if !is_dir { continue; }
-        let dir_name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        if !is_dir {
+            continue;
+        }
+        let dir_name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
 
         // Skip hidden system dirs like .git
-        if dir_name == ".git" { continue; }
+        if dir_name == ".git" {
+            continue;
+        }
 
-        // A skill directory should contain at least one .md file (the instruction).
-        // Skip directories that don't look like skills (e.g. .vscode, outputs).
-        if !looks_like_skill(&path) { continue; }
+        // A skill directory must contain the canonical manifest. Legacy
+        // lowercase `skill.md` is accepted and normalized when copied into
+        // aiem ownership.
+        if !looks_like_skill(&path) {
+            continue;
+        }
 
         // Skip if already seen (from another IDE with overlapping dirs)
-        if seen_paths.iter().any(|s| normalize_path(s) == normalize_path(&path)) {
+        let np = normalize_path(&path);
+        if seen_paths.contains(&np) {
             continue;
         }
 
         // Skip if this is an already deployed link
-        if path_matches_any(&path, deployed_links) { continue; }
+        if path_matches_any(&path, deployed_links) {
+            continue;
+        }
 
         // Skip if managed by aiem (match by ID or path, using normalized comparison)
         let candidate_id = format!("local__{}", sanitize_id(&dir_name));
-        if managed_ids.iter().any(|id| id == &candidate_id || id == &dir_name) {
+        if managed_ids
+            .iter()
+            .any(|id| id == &candidate_id || id == &dir_name)
+        {
             continue;
         }
-        if path_matches_any(&path, managed_paths) { continue; }
+        if path_matches_any(&path, managed_paths) {
+            continue;
+        }
 
         let is_link = crate::fs_util::is_link(&path);
-        seen_paths.push(path.clone());
+        seen_paths.insert(np);
         found.push(FoundSkill {
             path,
             ide_id: source_label.to_string(),
@@ -225,20 +250,9 @@ fn scan_dir_for_skills(
     }
 }
 
-/// Check if a directory looks like a skill (contains at least one .md file).
+/// Check if a directory looks like a skill.
 fn looks_like_skill(path: &Path) -> bool {
-    let entries = match std::fs::read_dir(path) {
-        Ok(e) => e,
-        Err(_) => return false,
-    };
-    for entry in entries.flatten() {
-        if let Some(ext) = entry.path().extension() {
-            if ext.eq_ignore_ascii_case("md") {
-                return true;
-            }
-        }
-    }
-    false
+    path.join("SKILL.md").is_file() || path.join("skill.md").is_file()
 }
 
 /// Import a discovered skill folder into the aiem registry.
@@ -268,9 +282,11 @@ pub fn import_skill(found: &FoundSkill, copy_to_aiem: bool) -> Result<Skill> {
         let dest = paths::skills_dir()?.join(&id);
         if !dest.exists() {
             // Resolve the real path first (follow junctions/symlinks).
-            let real_src = std::fs::canonicalize(&found.path).unwrap_or_else(|_| found.path.clone());
+            let real_src =
+                std::fs::canonicalize(&found.path).unwrap_or_else(|_| found.path.clone());
             match crate::fs_util::copy_dir_safe(&real_src, &dest) {
                 Ok(()) => {
+                    let _ = crate::skills::github::ensure_canonical_skill_manifest(&dest);
                     // Copy succeeded — move the original out of the IDE's
                     // skills tree into the recycle bin so the IDE no longer
                     // sees two copies of the same content.  Best-effort:
@@ -300,7 +316,9 @@ pub fn import_skill(found: &FoundSkill, copy_to_aiem: bool) -> Result<Skill> {
     let mut skill = Skill {
         id: id.clone(),
         name: found.dir_name.clone(),
-        source: SkillSource::Local { path: dest_path.clone() },
+        source: SkillSource::Local {
+            path: dest_path.clone(),
+        },
         version: "imported".to_string(),
         path: dest_path,
         description: Some(format!("Imported from {}", found.ide_id)),
@@ -336,9 +354,9 @@ pub struct FoundMcpServer {
 
 /// Scan all supported IDE configs for MCP servers not in aiem's registry.
 pub fn discover_mcp() -> Result<Vec<FoundMcpServer>> {
-    let reg = McpRegistry::load().unwrap_or_default();
+    let reg = McpRegistry::load()?;
     let managed: Vec<String> = reg.list().map(|s| s.name.clone()).collect();
-    let mut found = Vec::new();
+    let mut found: Vec<FoundMcpServer> = Vec::new();
     let mut seen_names: Vec<String> = Vec::new();
 
     for &ide_id in adapters::SUPPORTED {
@@ -347,10 +365,12 @@ pub fn discover_mcp() -> Result<Vec<FoundMcpServer>> {
             Err(_) => continue, // config missing or unreadable
         };
         for s in servers {
-            if managed.contains(&s.name) { continue; }
+            if managed.contains(&s.name) {
+                continue;
+            }
             if seen_names.contains(&s.name) {
                 // Already found in another IDE — merge target
-                if let Some(existing) = found.iter_mut().find(|f: &&mut FoundMcpServer| f.server.name == s.name) {
+                if let Some(existing) = found.iter_mut().find(|f| f.server.name == s.name) {
                     if !existing.server.targets.contains(&ide_id.to_string()) {
                         existing.server.targets.push(ide_id.to_string());
                     }
@@ -389,13 +409,17 @@ pub fn import_mcp(found: &FoundMcpServer) -> Result<()> {
 
 /// Import ALL discovered MCP servers at once. Returns the count imported.
 pub fn import_all_mcp(found: &[FoundMcpServer]) -> Result<usize> {
-    if found.is_empty() { return Ok(0); }
+    if found.is_empty() {
+        return Ok(0);
+    }
     let mut reg = McpRegistry::load()?;
     let mut count = 0;
     for f in found {
         if let Some(existing) = reg.get_mut(&f.server.name) {
             for t in &f.server.targets {
-                if !existing.targets.contains(t) { existing.targets.push(t.clone()); }
+                if !existing.targets.contains(t) {
+                    existing.targets.push(t.clone());
+                }
             }
         } else {
             reg.upsert(f.server.clone());
@@ -418,6 +442,12 @@ pub fn import_all_skills(found: &[FoundSkill], copy_to_aiem: bool) -> Result<usi
 
 fn sanitize_id(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }

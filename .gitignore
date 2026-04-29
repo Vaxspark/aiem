@@ -21,3 +21,9 @@ vendor/
 .cargo/
 
 dist/
+
+# Local agent/editor/runtime artifacts
+.agents/
+.codex-preview/
+.cursor/
+.tmp-*/

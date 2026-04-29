@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use aiem_core::mcp::McpRegistry;
-use aiem_core::profiles::ProfileStore;
 use aiem_core::projects::ProjectStore;
 use aiem_core::secrets::Vault;
 use aiem_core::skills::SkillRegistry;
@@ -49,9 +48,6 @@ impl AppState {
     }
     pub fn vault(&self) -> anyhow::Result<Vault> {
         Vault::load().map_err(Into::into)
-    }
-    pub fn profiles(&self) -> anyhow::Result<ProfileStore> {
-        ProfileStore::load().map_err(Into::into)
     }
     pub fn projects(&self) -> anyhow::Result<ProjectStore> {
         ProjectStore::load().map_err(Into::into)

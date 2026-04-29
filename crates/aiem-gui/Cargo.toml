@@ -27,3 +27,4 @@ walkdir.workspace = true
 sha2.workspace = true
 hex.workspace = true
 dark-light = "1"
+image = { version = "0.25", default-features = false, features = ["png"] }

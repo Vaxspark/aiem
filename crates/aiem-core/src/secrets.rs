@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::fs_util::atomic_write;
+use crate::fs_util::{atomic_write, strip_utf8_bom};
 use crate::{paths, Error, Result};
 
 const SERVICE: &str = "aiem";
@@ -34,15 +34,19 @@ pub struct Vault {
 }
 
 impl Vault {
-    pub fn file() -> Result<PathBuf> { paths::secrets_index_file() }
+    pub fn file() -> Result<PathBuf> {
+        paths::secrets_index_file()
+    }
 
     pub fn load() -> Result<Self> {
         let p = Self::file()?;
         if !p.exists() {
-            return Ok(Self { index: SecretIndex::default() });
+            return Ok(Self {
+                index: SecretIndex::default(),
+            });
         }
         let bytes = std::fs::read(&p)?;
-        let index: SecretIndex = serde_json::from_slice(&bytes)?;
+        let index: SecretIndex = serde_json::from_slice(strip_utf8_bom(&bytes))?;
         Ok(Self { index })
     }
 
@@ -53,21 +57,33 @@ impl Vault {
         Ok(())
     }
 
-    pub fn names(&self) -> impl Iterator<Item = &String> { self.index.secrets.keys() }
-    pub fn meta(&self, name: &str) -> Option<&SecretMeta> { self.index.secrets.get(name) }
-    pub fn len(&self) -> usize { self.index.secrets.len() }
-    pub fn is_empty(&self) -> bool { self.index.secrets.is_empty() }
+    pub fn names(&self) -> impl Iterator<Item = &String> {
+        self.index.secrets.keys()
+    }
+    pub fn meta(&self, name: &str) -> Option<&SecretMeta> {
+        self.index.secrets.get(name)
+    }
+    pub fn len(&self) -> usize {
+        self.index.secrets.len()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.index.secrets.is_empty()
+    }
 
     /// Store a secret value in the OS keyring; persist name → meta in the index.
     pub fn set(&mut self, name: &str, value: &str, description: Option<String>) -> Result<()> {
         validate_name(name)?;
-        let entry = keyring::Entry::new(SERVICE, name)
-            .map_err(|e| Error::Keyring(e.to_string()))?;
-        entry.set_password(value)
+        let entry =
+            keyring::Entry::new(SERVICE, name).map_err(|e| Error::Keyring(e.to_string()))?;
+        entry
+            .set_password(value)
             .map_err(|e| Error::Keyring(e.to_string()))?;
         self.index.secrets.insert(
             name.to_string(),
-            SecretMeta { description, updated_at: Utc::now() },
+            SecretMeta {
+                description,
+                updated_at: Utc::now(),
+            },
         );
         self.save()?;
         Ok(())
@@ -75,8 +91,8 @@ impl Vault {
 
     /// Fetch a secret value from the OS keyring. Returns `NotFound` if missing.
     pub fn get(&self, name: &str) -> Result<String> {
-        let entry = keyring::Entry::new(SERVICE, name)
-            .map_err(|e| Error::Keyring(e.to_string()))?;
+        let entry =
+            keyring::Entry::new(SERVICE, name).map_err(|e| Error::Keyring(e.to_string()))?;
         match entry.get_password() {
             Ok(v) => Ok(v),
             Err(keyring::Error::NoEntry) => {
@@ -88,8 +104,8 @@ impl Vault {
 
     /// Delete a secret from both the keyring and the index.
     pub fn delete(&mut self, name: &str) -> Result<()> {
-        let entry = keyring::Entry::new(SERVICE, name)
-            .map_err(|e| Error::Keyring(e.to_string()))?;
+        let entry =
+            keyring::Entry::new(SERVICE, name).map_err(|e| Error::Keyring(e.to_string()))?;
         match entry.delete_credential() {
             Ok(()) | Err(keyring::Error::NoEntry) => {}
             Err(e) => return Err(Error::Keyring(e.to_string())),
@@ -105,7 +121,9 @@ fn validate_name(name: &str) -> Result<()> {
         return Err(Error::Invalid("secret name cannot be empty".into()));
     }
     if name.chars().any(|c| c.is_whitespace()) {
-        return Err(Error::Invalid("secret name cannot contain whitespace".into()));
+        return Err(Error::Invalid(
+            "secret name cannot contain whitespace".into(),
+        ));
     }
     Ok(())
 }
@@ -155,7 +173,11 @@ mod tests {
     #[test]
     fn expand_basic() {
         let got = expand_with("Bearer ${secret:token} plain", |n| {
-            if n == "token" { Some("abc".into()) } else { None }
+            if n == "token" {
+                Some("abc".into())
+            } else {
+                None
+            }
         });
         assert_eq!(got, "Bearer abc plain");
     }

@@ -1,74 +1,50 @@
 # aiem Web UI
 
-Headless browser-based management for the aiem skill & MCP ecosystem. Designed
-to run on a remote Linux server and be accessed from your laptop via SSH port
-forwarding — no public port, no passwords, no Node.js.
+Web UI 是 aiem 的浏览器管理界面，由 `aiem` 二进制程序直接提供，不需要 Node.js。
 
-## Quick start
+![Skills 页面](../pic/skillspage.png)
+
+## 启动
+
+```powershell
+aiem serve --host 127.0.0.1 --port 8787 --open
+```
+
+如果部署在远程机器上，建议保持服务只监听本地地址，然后通过 SSH 转发访问：
 
 ```bash
-# On the remote server:
-cargo install --path crates/aiem-cli
-aiem serve                       # listens on 127.0.0.1:8787
-
-# On your laptop:
+aiem serve --host 127.0.0.1 --port 8787
 ssh -L 8787:localhost:8787 user@server
-# then open http://localhost:8787 in any browser
 ```
 
-Flags:
+随后在本机打开：
 
-- `--host 127.0.0.1` (default, loopback only — the safe choice)
-- `--port 8787`
-- `--open` open the browser automatically (only useful locally)
-
-## Persistent service (systemd)
-
-```bash
-# On the remote Linux box:
-sudo cp crates/aiem-web/packaging/aiem.service /etc/systemd/system/
-sudo sed -i 's/USERNAME/'"$USER"'/g' /etc/systemd/system/aiem.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now aiem
-sudo systemctl status aiem
+```text
+http://127.0.0.1:8787
 ```
 
-## Features (MVP)
+## 页面预览
 
-All 9 tabs mirror the desktop GUI:
+![Skills 页面](../pic/skillspage.png)
 
-| Tab       | Path        | Capabilities                                                     |
-|-----------|-------------|------------------------------------------------------------------|
-| Skills    | /skills     | list / add / update / remove / deploy / group-sync               |
-| MCP       | /mcp        | list / add stdio / toggle / remove / sync-all                    |
-| Secrets   | /secrets    | list / set / delete (OS keyring)                                 |
-| Profiles  | /profiles   | create / activate / deactivate / remove                          |
-| Projects  | /projects   | register / remove                                                |
-| Discover  | /discover   | scan disk + IDE configs, import unmanaged skills/MCP             |
-| Store     | /store      | search smithery.ai · glama.ai · skills online                    |
-| IDEs      | /ides       | read-only list of supported IDE targets                          |
-| Settings  | /settings   | GITHUB_TOKEN management, paths, host info                        |
+![发现页面](../pic/discoverpage.png)
 
-## Architecture
+## 主要页面
 
-```
-browser  ─── HTML/HTMX ───▶  axum 0.7  ──▶  aiem-core (SkillRegistry,
-   ▲                          │                         McpRegistry, Vault,
-   │                          │                         ProfileStore, ...)
-   └── SSE  /events ──────────┘
-```
+| 页面 | 路径 | 用途 |
+|---|---|---|
+| Skills | `/skills` | 安装、更新、部署、移除和查看 Skills |
+| MCP 服务 | `/mcp` | 添加、部署、移除、启用、禁用和查看 MCP 服务 |
+| 项目 | `/projects` | 将 IDE、Skills 和 MCP 服务绑定到一个工作区 |
+| 发现 | `/discover` | 扫描本地 IDE 配置并导入未托管资源 |
+| 密钥 | `/secrets` | 把密钥保存到系统密钥环 |
+| IDE 设置 | `/ides` | 查看和管理支持的 IDE 目标 |
+| 设置 | `/settings` | 配置 GitHub token、备份、路径和运行信息 |
 
-- **No authentication** — loopback-only binding makes SSH your auth boundary.
-- **SSE** pushes toast / task progress / invalidation events to every open tab.
-- **HTMX** listens for `invalidate` events and refreshes the relevant list in
-  place without a full page reload.
-- **Single binary** — `aiem serve` is a subcommand of the existing `aiem` CLI
-  under a default-on `web` cargo feature. Disable with `--no-default-features`
-  to build a pure CLI without the HTTP stack.
+## 语言
 
-## Remote security checklist
+Web UI 支持中文和英文。语言切换状态会保存在浏览器本地，下次打开时继续沿用。
 
-- [ ] Never use `--host 0.0.0.0` unless you put a reverse proxy in front
-- [ ] SSH key-only access to the server
-- [ ] Run `aiem serve` as a non-root user
-- [ ] Keep `GITHUB_TOKEN` in the keyring, not in systemd Environment=
+## Notes
+
+The Web UI is embedded in the `aiem` binary. Use `aiem serve --open` for local management, or bind to `127.0.0.1` and use SSH forwarding on remote machines.

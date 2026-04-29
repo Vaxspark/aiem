@@ -15,11 +15,7 @@ use crate::{Error, Result};
 /// - Resolves the project by absolute path (must exist in `ProjectStore`).
 /// - Calls `install::deploy` to create the symlink/junction/copy.
 /// - Adds `skill_id` to `project.skills` (dedup) and persists.
-pub fn deploy_to_project(
-    skill_id: &str,
-    ide_id: &str,
-    project_path: &Path,
-) -> Result<PathBuf> {
+pub fn deploy_to_project(skill_id: &str, ide_id: &str, project_path: &Path) -> Result<PathBuf> {
     let project_s = project_path.to_string_lossy().to_string();
     let mut store = ProjectStore::load()?;
     let _proj = store.get(&project_s).ok_or_else(|| {
@@ -39,6 +35,9 @@ pub fn deploy_to_project(
 
     // Upsert into Project.skills.
     if let Some(proj) = store.get_mut(&project_s) {
+        if !proj.ides.iter().any(|i| i == ide_id) {
+            proj.ides.push(ide_id.to_string());
+        }
         if !proj.skills.iter().any(|s| s == skill_id) {
             proj.skills.push(skill_id.to_string());
         }
@@ -50,11 +49,7 @@ pub fn deploy_to_project(
 
 /// Undeploy a skill from a project: removes the IDE link and drops the skill
 /// id from `project.skills`.
-pub fn undeploy_from_project(
-    skill_id: &str,
-    ide_id: &str,
-    project_path: &Path,
-) -> Result<()> {
+pub fn undeploy_from_project(skill_id: &str, ide_id: &str, project_path: &Path) -> Result<()> {
     let project_s = project_path.to_string_lossy().to_string();
 
     let mut reg = SkillRegistry::load()?;
@@ -84,7 +79,9 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::MutexGuard;
 
-    fn lock() -> MutexGuard<'static, ()> { crate::test_support::lock() }
+    fn lock() -> MutexGuard<'static, ()> {
+        crate::test_support::lock()
+    }
 
     fn setup_tmp() -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
@@ -96,7 +93,9 @@ mod tests {
         Skill {
             id: id.to_string(),
             name: name.to_string(),
-            source: SkillSource::Local { path: path.to_path_buf() },
+            source: SkillSource::Local {
+                path: path.to_path_buf(),
+            },
             version: "v1".into(),
             path: path.to_path_buf(),
             description: None,
@@ -113,6 +112,7 @@ mod tests {
         let proj_dir = tempfile::tempdir().unwrap();
         let skill_src = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(skill_src.path().join("content")).unwrap();
+        std::fs::write(skill_src.path().join("SKILL.md"), "# Skill A").unwrap();
 
         // Register project.
         let mut store = ProjectStore::load().unwrap();
@@ -132,15 +132,24 @@ mod tests {
 
         // First deploy attaches.
         deploy_to_project("skill-a", "cursor", proj_dir.path()).unwrap();
+        let deployed = proj_dir.path().join(".cursor/skills/skill-a");
+        assert!(deployed.join("SKILL.md").is_file());
+        assert!(!crate::fs_util::is_link(&deployed));
         let st = ProjectStore::load().unwrap();
-        let p = st.get(&proj_dir.path().to_string_lossy().to_string()).unwrap();
+        let p = st
+            .get(&proj_dir.path().to_string_lossy().to_string())
+            .unwrap();
         assert_eq!(p.skills, vec!["skill-a".to_string()]);
+        assert_eq!(p.ides, vec!["cursor".to_string()]);
 
         // Second deploy is idempotent (no duplicate id).
         deploy_to_project("skill-a", "cursor", proj_dir.path()).unwrap();
         let st = ProjectStore::load().unwrap();
-        let p = st.get(&proj_dir.path().to_string_lossy().to_string()).unwrap();
+        let p = st
+            .get(&proj_dir.path().to_string_lossy().to_string())
+            .unwrap();
         assert_eq!(p.skills, vec!["skill-a".to_string()]);
+        assert_eq!(p.ides, vec!["cursor".to_string()]);
     }
 
     #[test]
@@ -150,6 +159,7 @@ mod tests {
         let proj_dir = tempfile::tempdir().unwrap();
         let skill_src = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(skill_src.path().join("content")).unwrap();
+        std::fs::write(skill_src.path().join("SKILL.md"), "# Skill B").unwrap();
 
         let mut store = ProjectStore::load().unwrap();
         store.upsert(Project {
@@ -169,7 +179,9 @@ mod tests {
         undeploy_from_project("skill-b", "cursor", proj_dir.path()).unwrap();
 
         let st = ProjectStore::load().unwrap();
-        let p = st.get(&proj_dir.path().to_string_lossy().to_string()).unwrap();
+        let p = st
+            .get(&proj_dir.path().to_string_lossy().to_string())
+            .unwrap();
         assert!(p.skills.is_empty());
     }
 
@@ -185,5 +197,56 @@ mod tests {
 
         let err = deploy_to_project("skill-c", "cursor", proj_dir.path()).unwrap_err();
         assert!(matches!(err, Error::NotFound(_)));
+    }
+
+    #[test]
+    fn deploy_reanchors_restored_cross_machine_path() {
+        let _g = lock();
+        let home = setup_tmp();
+        let proj_dir = tempfile::tempdir().unwrap();
+
+        let canonical = home.path().join("skills").join("owner__repo__stale-skill");
+        std::fs::create_dir_all(&canonical).unwrap();
+        std::fs::write(canonical.join("SKILL.md"), "# Restored Skill").unwrap();
+
+        let mut store = ProjectStore::load().unwrap();
+        store.upsert(Project {
+            name: "demo".into(),
+            path: proj_dir.path().to_string_lossy().to_string(),
+            ides: vec![],
+            skills: vec![],
+            mcp_servers: vec![],
+        });
+        store.save().unwrap();
+
+        let mut reg = SkillRegistry::load().unwrap();
+        reg.upsert(Skill {
+            id: "owner__repo__stale-skill".into(),
+            name: "stale-skill".into(),
+            source: SkillSource::GitHub {
+                owner: "owner".into(),
+                repo: "repo".into(),
+                r#ref: None,
+                subdir: Some("skills/stale-skill".into()),
+            },
+            version: "old".into(),
+            path: PathBuf::from(r"C:\Users\buaa\.aiem\skills\owner__repo__stale-skill"),
+            description: None,
+            installed_at: None,
+            deployments: BTreeMap::new(),
+            file_hashes: BTreeMap::new(),
+        });
+        reg.save().unwrap();
+
+        deploy_to_project("owner__repo__stale-skill", "cursor", proj_dir.path()).unwrap();
+
+        let deployed = proj_dir.path().join(".cursor/skills/stale-skill");
+        assert!(deployed.is_dir());
+        assert!(deployed.join("SKILL.md").is_file());
+        assert!(!crate::fs_util::is_link(&deployed));
+
+        let reg = SkillRegistry::load().unwrap();
+        let skill = reg.get("owner__repo__stale-skill").unwrap();
+        assert_eq!(skill.path, canonical);
     }
 }

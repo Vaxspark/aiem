@@ -32,7 +32,13 @@ pub fn run(cmd: DiscoverCmd) -> anyhow::Result<()> {
                 println!("  Found {} unmanaged skill(s):", skills.len());
                 for f in &skills {
                     let link_tag = if f.is_link { " [link]" } else { "" };
-                    println!("    • {:<30} IDE: {:<12} {}{}", f.dir_name, f.ide_id, f.path.display(), link_tag);
+                    println!(
+                        "    • {:<30} IDE: {:<12} {}{}",
+                        f.dir_name,
+                        f.ide_id,
+                        f.path.display(),
+                        link_tag
+                    );
                 }
             }
 
@@ -45,7 +51,9 @@ pub fn run(cmd: DiscoverCmd) -> anyhow::Result<()> {
                 println!("  Found {} unmanaged MCP server(s):", mcp.len());
                 for f in &mcp {
                     let transport = match &f.server.transport {
-                        aiem_core::mcp::McpTransport::Stdio { command, .. } => format!("stdio: {command}"),
+                        aiem_core::mcp::McpTransport::Stdio { command, .. } => {
+                            format!("stdio: {command}")
+                        }
                         aiem_core::mcp::McpTransport::Http { url, .. } => format!("http: {url}"),
                         aiem_core::mcp::McpTransport::Sse { url, .. } => format!("sse: {url}"),
                     };

@@ -8,14 +8,21 @@ use chrono::Utc;
 
 use crate::{paths, Error, Result};
 
+/// Strip a UTF-8 BOM if present (common when JSON is saved from some Windows editors).
+pub fn strip_utf8_bom(bytes: &[u8]) -> &[u8] {
+    if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &bytes[3..]
+    } else {
+        bytes
+    }
+}
+
 /// Atomically write `contents` to `path` (write to tmp sibling then rename).
 pub fn atomic_write(path: &Path, contents: &[u8]) -> Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut tmp = tempfile::NamedTempFile::new_in(
-        path.parent().unwrap_or_else(|| Path::new(".")),
-    )?;
+    let mut tmp = tempfile::NamedTempFile::new_in(path.parent().unwrap_or_else(|| Path::new(".")))?;
     {
         let f = tmp.as_file_mut();
         f.write_all(contents)?;
@@ -61,7 +68,7 @@ pub fn link_dir(target: &Path, link: &Path) -> Result<LinkKind> {
         // an option prefix, so a path like `E:\proj\.claude/skills\foo` makes
         // it see `/skills` as an unknown switch → error 123
         // ("文件名、目录名或卷标语法不正确").
-        let link_s   = link.to_string_lossy().replace('/', "\\");
+        let link_s = link.to_string_lossy().replace('/', "\\");
         let target_s = target.to_string_lossy().replace('/', "\\");
 
         // Try dir symlink (needs Developer Mode or admin).
@@ -140,7 +147,9 @@ fn is_reparse_point(meta: &fs::Metadata) -> bool {
 }
 
 #[cfg(unix)]
-fn is_reparse_point(_meta: &fs::Metadata) -> bool { false }
+fn is_reparse_point(_meta: &fs::Metadata) -> bool {
+    false
+}
 
 /// Is this path a symlink or (on Windows) a junction/reparse point?
 pub fn is_link(path: &Path) -> bool {
@@ -154,12 +163,19 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst)?;
     for entry in walkdir::WalkDir::new(src) {
         let entry = entry.map_err(|e| Error::Invalid(e.to_string()))?;
-        let rel = entry.path().strip_prefix(src).unwrap();
+        let rel = entry.path().strip_prefix(src).map_err(|_| {
+            Error::Invalid(format!(
+                "walkdir entry outside source tree: {:?}",
+                entry.path()
+            ))
+        })?;
         let target = dst.join(rel);
         if entry.file_type().is_dir() {
             fs::create_dir_all(&target)?;
         } else if entry.file_type().is_file() {
-            if let Some(p) = target.parent() { fs::create_dir_all(p)?; }
+            if let Some(p) = target.parent() {
+                fs::create_dir_all(p)?;
+            }
             fs::copy(entry.path(), &target)?;
         }
     }
@@ -170,9 +186,7 @@ pub fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
 /// limits depth to 10 levels, and continues on individual file errors.
 pub fn copy_dir_safe(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst)?;
-    let walker = walkdir::WalkDir::new(src)
-        .max_depth(10)
-        .follow_links(false); // Do NOT follow symlinks/junctions
+    let walker = walkdir::WalkDir::new(src).max_depth(10).follow_links(false); // Do NOT follow symlinks/junctions
     for entry in walker {
         let entry = match entry {
             Ok(e) => e,
@@ -186,7 +200,9 @@ pub fn copy_dir_safe(src: &Path, dst: &Path) -> Result<()> {
         if entry.file_type().is_dir() {
             let _ = fs::create_dir_all(&target);
         } else if entry.file_type().is_file() {
-            if let Some(p) = target.parent() { let _ = fs::create_dir_all(p); }
+            if let Some(p) = target.parent() {
+                let _ = fs::create_dir_all(p);
+            }
             let _ = fs::copy(entry.path(), &target); // best-effort
         }
         // symlinks/junctions inside: skip silently
@@ -200,7 +216,13 @@ pub fn copy_dir_safe(src: &Path, dst: &Path) -> Result<()> {
 /// Useful when deriving a directory name from a user-supplied id.
 pub fn sanitize_for_path(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -249,9 +271,82 @@ pub fn move_to_trash(path: &Path, label: &str) -> Result<Option<PathBuf>> {
     if meta.is_dir() {
         copy_dir_safe(path, &dest)?;
     } else {
-        if let Some(p) = dest.parent() { fs::create_dir_all(p)?; }
+        if let Some(p) = dest.parent() {
+            fs::create_dir_all(p)?;
+        }
         fs::copy(path, &dest)?;
     }
     remove_path(path)?;
     Ok(Some(dest))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strip_bom_present() {
+        let with_bom = b"\xEF\xBB\xBF{\"key\":1}";
+        let result = strip_utf8_bom(with_bom);
+        assert_eq!(result, b"{\"key\":1}");
+    }
+
+    #[test]
+    fn strip_bom_absent() {
+        let no_bom = b"{\"key\":1}";
+        assert_eq!(strip_utf8_bom(no_bom), no_bom);
+    }
+
+    #[test]
+    fn strip_bom_empty() {
+        assert_eq!(strip_utf8_bom(b""), b"");
+    }
+
+    #[test]
+    fn sanitize_path_replaces_special() {
+        assert_eq!(sanitize_for_path("hello/world.."), "hello_world__");
+    }
+
+    #[test]
+    fn sanitize_path_preserves_safe() {
+        assert_eq!(sanitize_for_path("my-skill_v2"), "my-skill_v2");
+    }
+
+    #[test]
+    fn copy_dir_recursive_works() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("a.txt"), "hello").unwrap();
+        std::fs::create_dir(src.path().join("sub")).unwrap();
+        std::fs::write(src.path().join("sub").join("b.txt"), "world").unwrap();
+        copy_dir_recursive(src.path(), &dst.path().join("out")).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join("out").join("a.txt")).unwrap(),
+            "hello"
+        );
+        assert_eq!(
+            std::fs::read_to_string(dst.path().join("out").join("sub").join("b.txt")).unwrap(),
+            "world"
+        );
+    }
+
+    #[test]
+    fn copy_dir_safe_skips_symlinks() {
+        let src = tempfile::tempdir().unwrap();
+        let dst = tempfile::tempdir().unwrap();
+        std::fs::write(src.path().join("real.txt"), "content").unwrap();
+        // Symlink that could point outside — should be skipped.
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/dev/null", src.path().join("bad")).ok();
+        copy_dir_safe(src.path(), &dst.path().join("out")).unwrap();
+        assert!(dst.path().join("out").join("real.txt").exists());
+    }
+
+    #[test]
+    fn atomic_write_creates_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("test.json");
+        atomic_write(&p, b"hello").unwrap();
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "hello");
+    }
 }
