@@ -252,6 +252,8 @@ input,select,textarea{color-scheme:dark light}
 .toolbar-actions{display:flex;align-items:center;gap:var(--space-2);flex-wrap:wrap;justify-content:flex-end}
 .content-padding{padding:var(--space-6);max-width:1280px}
 .skills-content,.wide-content{max-width:none}
+.mcp-content{width:100%;box-sizing:border-box}
+.mcp-content #mcp-list,.mcp-content .group-panel{width:100%;max-width:none}
 
 .toast-area{position:fixed;top:var(--space-4);right:var(--space-4);z-index:100;width:min(340px,calc(100vw - 32px));pointer-events:none}
 .toast-area>*+*{margin-top:var(--space-2)}

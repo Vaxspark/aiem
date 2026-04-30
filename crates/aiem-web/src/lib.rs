@@ -111,8 +111,13 @@ async fn bind_with_fallback(
 }
 
 async fn shutdown_signal() {
-    let _ = tokio::signal::ctrl_c().await;
-    tracing::info!("shutdown signal received");
+    match tokio::signal::ctrl_c().await {
+        Ok(()) => tracing::info!("shutdown signal received"),
+        Err(err) => {
+            tracing::warn!("failed to install Ctrl-C handler; keeping server alive: {err}");
+            std::future::pending::<()>().await;
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]

@@ -63,7 +63,7 @@ async fn index(State(st): State<AppState>, Query(q): Query<ListQuery>) -> Markup
                    onclick="document.getElementById('mcp-bundles').toggleAttribute('hidden')" { "Bundles" }
         }))
 
-        div class="content-padding" {
+        div class="content-padding wide-content mcp-content" {
             div id="mcp-add" hidden { (add_forms()) }
             div id="mcp-bundles" hidden { (bundles_panel()) }
 
