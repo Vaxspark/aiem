@@ -122,7 +122,6 @@ jobs:
             cp "target/${{ matrix.target }}/release/${b}" "dist/${PKG}/"
           done
           cp README.md LICENSE "dist/${PKG}/"
-          cp -r docs "dist/${PKG}/docs" || true
           cp -r pic "dist/${PKG}/pic" || true
           tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
           ( cd dist && shasum -a 256 "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256" )
@@ -186,7 +185,6 @@ jobs:
           cp "target/${{ matrix.target }}/release/aiem-gui" "${APP}/Contents/MacOS/aiem-gui"
           chmod 0755 "${ROOT}/usr/local/bin/aiem" "${ROOT}/usr/local/bin/aiem-gui" "${APP}/Contents/MacOS/aiem-gui"
           cp README.md LICENSE "${ROOT}/usr/local/share/aiem/"
-          cp -R docs "${ROOT}/usr/local/share/aiem/docs"
           cp -R pic "${ROOT}/usr/local/share/aiem/pic"
           cat > "${APP}/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -250,7 +248,6 @@ jobs:
           Copy-Item pic/aiem.ico "dist/$pkg/aiem.ico"
           Copy-Item README.md,LICENSE "dist/$pkg/"
           Copy-Item -Recurse pic "dist/$pkg/pic"
-          if (Test-Path docs) { Copy-Item -Recurse docs "dist/$pkg/docs" }
           Set-Content -Path "dist/$pkg/Launch aiem GUI.cmd" -Encoding ascii -Value '@echo off', 'start "" "%~dp0aiem-gui.exe"'
           Set-Content -Path "dist/$pkg/Launch aiem Web UI.cmd" -Encoding ascii -Value '@echo off', '"%~dp0aiem.exe" serve --host 127.0.0.1 --port 8787 --open', 'pause'
           Compress-Archive -Path "dist/$pkg/*" -DestinationPath "dist/$pkg.zip"
