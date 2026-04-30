@@ -123,8 +123,119 @@ jobs:
           done
           cp README.md LICENSE "dist/${PKG}/"
           cp -r docs "dist/${PKG}/docs" || true
+          cp -r pic "dist/${PKG}/pic" || true
           tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
           ( cd dist && shasum -a 256 "${PKG}.tar.gz" > "${PKG}.tar.gz.sha256" )
+
+      - name: Package Debian installer
+        if: matrix.name == 'linux-x86_64-gnu'
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${RELEASE_TAG}"
+          VERSION="${TAG#v}"
+          PKG="aiem-${TAG}-${{ matrix.name }}"
+          ROOT="dist/debroot-${{ matrix.name }}"
+          rm -rf "${ROOT}"
+          mkdir -p \
+            "${ROOT}/DEBIAN" \
+            "${ROOT}/usr/bin" \
+            "${ROOT}/usr/share/applications" \
+            "${ROOT}/usr/share/doc/aiem" \
+            "${ROOT}/usr/share/icons/hicolor/256x256/apps"
+          cp "target/${{ matrix.target }}/release/aiem" "${ROOT}/usr/bin/aiem"
+          cp "target/${{ matrix.target }}/release/aiem-gui" "${ROOT}/usr/bin/aiem-gui"
+          chmod 0755 "${ROOT}/usr/bin/aiem" "${ROOT}/usr/bin/aiem-gui"
+          cp README.md LICENSE "${ROOT}/usr/share/doc/aiem/"
+          cp packaging/linux/aiem.desktop "${ROOT}/usr/share/applications/aiem.desktop"
+          cp pic/aiem-256.png "${ROOT}/usr/share/icons/hicolor/256x256/apps/aiem.png"
+          cat > "${ROOT}/DEBIAN/control" <<EOF
+          Package: aiem
+          Version: ${VERSION}
+          Section: utils
+          Priority: optional
+          Architecture: amd64
+          Maintainer: aiem contributors <noreply@github.com>
+          Homepage: https://github.com/Vaxspark/aiem
+          Depends: libc6, libgcc-s1, ca-certificates, libxkbcommon0, libxkbcommon-x11-0, libwayland-client0, libxcb1, libxcb-render0, libxcb-shape0, libxcb-xfixes0, libgtk-3-0
+          Description: AI Extension Manager
+           Manage AI skills, MCP servers, project profiles, secrets, and backups.
+          EOF
+          sed -i 's/^          //' "${ROOT}/DEBIAN/control"
+          dpkg-deb --build "${ROOT}" "dist/${PKG}.deb"
+          ( cd dist && sha256sum "${PKG}.deb" > "${PKG}.deb.sha256" )
+
+      - name: Package macOS installer
+        if: startsWith(matrix.os, 'macos')
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${RELEASE_TAG}"
+          VERSION="${TAG#v}"
+          PKG="aiem-${TAG}-${{ matrix.name }}"
+          ROOT="dist/pkgroot-${{ matrix.name }}"
+          APP="${ROOT}/Applications/aiem.app"
+          rm -rf "${ROOT}"
+          mkdir -p \
+            "${APP}/Contents/MacOS" \
+            "${APP}/Contents/Resources" \
+            "${ROOT}/usr/local/bin" \
+            "${ROOT}/usr/local/share/aiem"
+          cp "target/${{ matrix.target }}/release/aiem" "${ROOT}/usr/local/bin/aiem"
+          cp "target/${{ matrix.target }}/release/aiem-gui" "${ROOT}/usr/local/bin/aiem-gui"
+          cp "target/${{ matrix.target }}/release/aiem-gui" "${APP}/Contents/MacOS/aiem-gui"
+          chmod 0755 "${ROOT}/usr/local/bin/aiem" "${ROOT}/usr/local/bin/aiem-gui" "${APP}/Contents/MacOS/aiem-gui"
+          cp README.md LICENSE "${ROOT}/usr/local/share/aiem/"
+          cp -R docs "${ROOT}/usr/local/share/aiem/docs"
+          cp -R pic "${ROOT}/usr/local/share/aiem/pic"
+          cat > "${APP}/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>CFBundleDisplayName</key>
+            <string>aiem</string>
+            <key>CFBundleExecutable</key>
+            <string>aiem-gui</string>
+            <key>CFBundleIconFile</key>
+            <string>aiem</string>
+            <key>CFBundleIdentifier</key>
+            <string>com.vaxspark.aiem</string>
+            <key>CFBundleName</key>
+            <string>aiem</string>
+            <key>CFBundlePackageType</key>
+            <string>APPL</string>
+            <key>CFBundleShortVersionString</key>
+            <string>${VERSION}</string>
+            <key>CFBundleVersion</key>
+            <string>${VERSION}</string>
+            <key>LSMinimumSystemVersion</key>
+            <string>10.15</string>
+          </dict>
+          </plist>
+          EOF
+          sed -i '' 's/^          //' "${APP}/Contents/Info.plist"
+          ICONSET="dist/aiem.iconset"
+          rm -rf "${ICONSET}"
+          mkdir -p "${ICONSET}"
+          sips -z 16 16 pic/aiem.png --out "${ICONSET}/icon_16x16.png" >/dev/null
+          sips -z 32 32 pic/aiem.png --out "${ICONSET}/icon_16x16@2x.png" >/dev/null
+          sips -z 32 32 pic/aiem.png --out "${ICONSET}/icon_32x32.png" >/dev/null
+          sips -z 64 64 pic/aiem.png --out "${ICONSET}/icon_32x32@2x.png" >/dev/null
+          sips -z 128 128 pic/aiem.png --out "${ICONSET}/icon_128x128.png" >/dev/null
+          sips -z 256 256 pic/aiem.png --out "${ICONSET}/icon_128x128@2x.png" >/dev/null
+          sips -z 256 256 pic/aiem.png --out "${ICONSET}/icon_256x256.png" >/dev/null
+          sips -z 512 512 pic/aiem.png --out "${ICONSET}/icon_256x256@2x.png" >/dev/null
+          sips -z 512 512 pic/aiem.png --out "${ICONSET}/icon_512x512.png" >/dev/null
+          sips -z 1024 1024 pic/aiem.png --out "${ICONSET}/icon_512x512@2x.png" >/dev/null
+          iconutil -c icns "${ICONSET}" -o "${APP}/Contents/Resources/aiem.icns"
+          pkgbuild \
+            --root "${ROOT}" \
+            --identifier "com.vaxspark.aiem" \
+            --version "${VERSION}" \
+            --install-location "/" \
+            "dist/${PKG}.pkg"
+          ( cd dist && shasum -a 256 "${PKG}.pkg" > "${PKG}.pkg.sha256" )
 
       - name: Package (windows)
         if: matrix.archive == 'zip'
@@ -138,9 +249,32 @@ jobs:
           }
           Copy-Item pic/aiem.ico "dist/$pkg/aiem.ico"
           Copy-Item README.md,LICENSE "dist/$pkg/"
+          Copy-Item -Recurse pic "dist/$pkg/pic"
           if (Test-Path docs) { Copy-Item -Recurse docs "dist/$pkg/docs" }
+          Set-Content -Path "dist/$pkg/Launch aiem GUI.cmd" -Encoding ascii -Value '@echo off', 'start "" "%~dp0aiem-gui.exe"'
+          Set-Content -Path "dist/$pkg/Launch aiem Web UI.cmd" -Encoding ascii -Value '@echo off', '"%~dp0aiem.exe" serve --host 127.0.0.1 --port 8787 --open', 'pause'
           Compress-Archive -Path "dist/$pkg/*" -DestinationPath "dist/$pkg.zip"
           (Get-FileHash "dist/$pkg.zip" -Algorithm SHA256).Hash | Out-File "dist/$pkg.zip.sha256" -Encoding ascii
+
+      - name: Install Inno Setup
+        if: matrix.name == 'windows-x86_64'
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Package Windows setup installer
+        if: matrix.name == 'windows-x86_64'
+        shell: pwsh
+        run: |
+          $tag = $env:RELEASE_TAG
+          $version = $tag.TrimStart('v')
+          $pkg = "aiem-$tag-${{ matrix.name }}"
+          $env:AIEM_VERSION = $version
+          $env:AIEM_PACKAGE_DIR = (Resolve-Path "dist/$pkg").Path
+          $env:AIEM_OUTPUT_DIR = (Resolve-Path "dist").Path
+          $env:AIEM_OUTPUT_BASE = "$pkg-setup"
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "packaging/windows/aiem.iss"
+          (Get-FileHash "dist/$pkg-setup.exe" -Algorithm SHA256).Hash | Out-File "dist/$pkg-setup.exe.sha256" -Encoding ascii
 
       - uses: actions/upload-artifact@v4
         with:

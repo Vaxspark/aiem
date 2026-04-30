@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=aiem
+Comment=AI Extension Manager
+Exec=aiem-gui
+Icon=aiem
+Terminal=false
+Categories=Development;Utility;
